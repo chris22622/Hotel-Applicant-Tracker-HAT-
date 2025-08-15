@@ -1,0 +1,1 @@
+"""HR ATS Application Package."""

@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - HR ATS{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <h1 class="mb-4">Dashboard</h1>
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <h3 class="text-primary">{{ stats.total_candidates or 0 }}</h3>
+                <p class="text-muted mb-0">Total Candidates</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <h3 class="text-info">{{ stats.active_roles or 0 }}</h3>
+                <p class="text-muted mb-0">Active Roles</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <h3 class="text-success">{{ stats.new_applications or 0 }}</h3>
+                <p class="text-muted mb-0">New Applications</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <h3 class="text-warning">{{ stats.interviews_today or 0 }}</h3>
+                <p class="text-muted mb-0">Interviews Today</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Quick Upload</h5>
+            </div>
+            <div class="card-body">
+                <div id="upload-zone" class="upload-zone">
+                    <div class="upload-spinner loading-spinner" style="display: none;"></div>
+                    <div class="upload-text">Drop resume files here or click to upload</div>
+                    <input type="file" id="file-input" multiple accept=".pdf,.doc,.docx,.txt" style="display: none;">
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Recent Activity</h5>
+            </div>
+            <div class="card-body">
+                {% if recent_activities %}
+                    <ul class="list-unstyled mb-0">
+                        {% for activity in recent_activities %}
+                        <li class="mb-2">
+                            <small class="text-muted">{{ activity.timestamp }}</small><br>
+                            {{ activity.description }}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p class="text-muted mb-0">No recent activity</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Candidates -->
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Recent Candidates</h5>
+                <a href="{{ url_for('pages.candidates_list') }}" class="btn btn-outline-primary btn-sm">View All</a>
+            </div>
+            <div class="card-body">
+                {% if recent_candidates %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Email</th>
+                                    <th>Current Role</th>
+                                    <th>Years Exp.</th>
+                                    <th>Status</th>
+                                    <th>Added</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for candidate in recent_candidates %}
+                                <tr>
+                                    <td>{{ candidate.full_name }}</td>
+                                    <td>{{ candidate.email or '-' }}</td>
+                                    <td>{{ candidate.current_title or '-' }}</td>
+                                    <td>{{ "%.1f"|format(candidate.years_total or 0) }}</td>
+                                    <td>
+                                        <span class="badge bg-secondary">{{ candidate.status }}</span>
+                                    </td>
+                                    <td>{{ candidate.created_at.strftime('%m/%d/%Y') if candidate.created_at else '-' }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-muted mb-0">No candidates yet. Upload some resumes to get started!</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

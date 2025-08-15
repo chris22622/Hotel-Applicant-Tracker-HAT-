@@ -1,0 +1,223 @@
+# Royalton Resort AI Screener Configuration
+# Edit this file to customize job requirements without changing code
+
+positions:
+  front_desk_agent:
+    must_have_skills:
+      - customer service
+      - computer skills
+      - communication
+      - multitasking
+      - phone skills
+    nice_to_have_skills:
+      - hotel experience
+      - PMS systems
+      - Opera
+      - front desk
+      - guest services
+      - reservations
+      - check-in
+      - concierge
+      - hospitality
+    cultural_fit_keywords:
+      - team player
+      - friendly
+      - professional
+      - positive attitude
+      - guest satisfaction
+      - problem solving
+    experience_weight: 0.3
+    skills_weight: 0.25
+    cultural_fit_weight: 0.25
+    hospitality_weight: 0.2
+
+  chef:
+    must_have_skills:
+      - cooking
+      - kitchen management
+      - food safety
+      - menu planning
+      - culinary arts
+    nice_to_have_skills:
+      - restaurant experience
+      - fine dining
+      - international cuisine
+      - cost control
+      - inventory management
+      - team leadership
+      - catering
+      - banquet
+      - pastry
+      - grill
+    cultural_fit_keywords:
+      - creative
+      - attention to detail
+      - team leader
+      - high pressure
+      - quality focused
+      - food passion
+    experience_weight: 0.4
+    skills_weight: 0.3
+    cultural_fit_weight: 0.15
+    hospitality_weight: 0.15
+
+  bartender:
+    must_have_skills:
+      - bartending
+      - mixology
+      - customer service
+      - cash handling
+      - beverage knowledge
+    nice_to_have_skills:
+      - cocktail creation
+      - wine knowledge
+      - beer knowledge
+      - flair bartending
+      - POS systems
+      - inventory
+      - bar management
+      - resort experience
+    cultural_fit_keywords:
+      - outgoing
+      - entertaining
+      - fast-paced
+      - social
+      - memorable experiences
+      - guest interaction
+    experience_weight: 0.35
+    skills_weight: 0.25
+    cultural_fit_weight: 0.25
+    hospitality_weight: 0.15
+
+  housekeeping_supervisor:
+    must_have_skills:
+      - housekeeping
+      - supervision
+      - quality control
+      - staff management
+      - cleaning protocols
+    nice_to_have_skills:
+      - hotel housekeeping
+      - inventory management
+      - training
+      - scheduling
+      - budget management
+      - guest relations
+      - laundry operations
+    cultural_fit_keywords:
+      - attention to detail
+      - leadership
+      - organizational
+      - reliable
+      - quality standards
+      - team management
+    experience_weight: 0.35
+    skills_weight: 0.25
+    cultural_fit_weight: 0.2
+    hospitality_weight: 0.2
+
+  security_officer:
+    must_have_skills:
+      - security
+      - surveillance
+      - emergency response
+      - report writing
+      - customer service
+    nice_to_have_skills:
+      - security certification
+      - law enforcement
+      - loss prevention
+      - crowd control
+      - first aid
+      - CPR
+      - hotel security
+      - patrol
+    cultural_fit_keywords:
+      - vigilant
+      - professional
+      - calm under pressure
+      - trustworthy
+      - guest safety
+      - discrete
+    experience_weight: 0.4
+    skills_weight: 0.3
+    cultural_fit_weight: 0.15
+    hospitality_weight: 0.15
+
+# Skill synonyms for better matching
+skill_synonyms:
+  customer_service:
+    - guest service
+    - client service
+    - customer care
+    - guest relations
+    - customer support
+    - hospitality service
+  
+  communication:
+    - verbal communication
+    - written communication
+    - interpersonal
+    - people skills
+    - social skills
+  
+  leadership:
+    - management
+    - supervision
+    - team lead
+    - team leader
+    - team management
+    - staff management
+  
+  computer_skills:
+    - computer literacy
+    - IT skills
+    - technology
+    - software
+    - digital skills
+  
+  hospitality:
+    - hotel
+    - resort
+    - tourism
+    - travel
+    - leisure
+    - vacation
+
+# Experience patterns for role-specific matching
+experience_patterns:
+  front_desk:
+    - front desk
+    - reception
+    - guest services
+    - check-in
+    - reservations
+  
+  chef:
+    - chef
+    - cook
+    - kitchen
+    - culinary
+    - restaurant
+    - food service
+  
+  bartender:
+    - bartender
+    - bar
+    - mixologist
+    - cocktail
+    - beverage
+
+# OCR settings
+ocr:
+  enabled: true
+  tesseract_path: null  # Auto-detect if null
+  languages: "eng"
+  dpi: 300
+
+# Output settings
+output:
+  excel_detailed: true
+  csv_export: true
+  create_folders: true
+  copy_files: true

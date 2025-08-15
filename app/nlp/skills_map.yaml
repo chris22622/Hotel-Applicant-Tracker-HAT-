@@ -1,0 +1,96 @@
+# Skills mapping for resume parsing
+programming:
+  - Python
+  - Java
+  - JavaScript
+  - TypeScript
+  - C++
+  - C#
+  - Go
+  - Rust
+  - PHP
+  - Ruby
+  - Swift
+  - Kotlin
+  - SQL
+  - HTML
+  - CSS
+
+frameworks:
+  - React
+  - Angular
+  - Vue.js
+  - Node.js
+  - Django
+  - Flask
+  - Spring
+  - ASP.NET
+  - Laravel
+  - Ruby on Rails
+  - Express.js
+
+databases:
+  - MySQL
+  - PostgreSQL
+  - MongoDB
+  - Redis
+  - Oracle
+  - SQL Server
+  - SQLite
+  - Cassandra
+  - DynamoDB
+
+cloud:
+  - AWS
+  - Azure
+  - Google Cloud
+  - Docker
+  - Kubernetes
+  - Terraform
+  - Jenkins
+  - GitLab CI
+  - GitHub Actions
+
+hospitality:
+  - Front Desk Operations
+  - Guest Relations
+  - Reservations
+  - Check-in/Check-out
+  - Opera PMS
+  - Amadeus
+  - Sabre
+  - Customer Service
+  - Concierge Services
+  - Hotel Management
+  - Revenue Management
+  - Housekeeping Management
+  - Food & Beverage
+  - Event Planning
+  - Wedding Coordination
+
+finance:
+  - Financial Analysis
+  - Accounting
+  - Budgeting
+  - Financial Modeling
+  - Excel
+  - QuickBooks
+  - SAP
+  - Risk Management
+  - Investment Analysis
+  - Tax Preparation
+
+soft_skills:
+  - Leadership
+  - Communication
+  - Problem Solving
+  - Team Management
+  - Project Management
+  - Time Management
+  - Critical Thinking
+  - Adaptability
+  - Customer Service
+  - Sales
+  - Marketing
+  - Training
+  - Mentoring

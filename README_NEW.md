@@ -1,13 +1,33 @@
-# Hotel AI Resume Screener
+# Hotel Applicant Tracker (HOT)
+AI-powered hotel resume screener with drag-and-drop UI, OCR for scanned PDFs, role-aware scoring, and instant Excel/CSV reports.
 
-**Intelligent candidate selection for hotels and resorts**
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Made with Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
+[![Streamlit](https://img.shields.io/badge/Streamlit-App-red.svg)](https://streamlit.io)
 
-A powerful, AI-driven resume screening system designed specifically for the hospitality industry. This tool automatically analyzes resumes, scores candidates based on role-specific requirements, and provides detailed recommendations to streamline your hiring process.
+> **📸 Screenshot Coming Soon:** Upload your screenshots to `assets/hot-ui.png` to complete the README!
+
+## 60-second run
+```bash
+pip install -r requirements.txt
+python -m spacy download en_core_web_sm
+# Install Tesseract OCR (Windows: Install_Tesseract_OCR.bat | Mac: brew install tesseract)
+streamlit run streamlit_app.py
+```
+
+**Try it:** drag PDFs/DOCX/TXT → pick a role → click **Run Screening** → download the Excel.
+
+## How to Evaluate (30 seconds)
+1. **🌐 Launch UI**: `streamlit run streamlit_app.py` 
+2. **📁 Drop samples**: Use resumes from `input_resumes/` folder
+3. **📊 Download Excel**: Get ranked candidates with contact info
+
+---
 
 ## 🌟 Features
 
 - **🤖 AI-Powered Analysis**: Advanced algorithms evaluate candidates based on skills, experience, and cultural fit
-- **🏨 Hotel-Specific Intelligence**: Pre-configured requirements for 15+ common hotel positions
+- **🏨 Hotel-Specific Intelligence**: Pre-configured requirements for 15+ common hotel positions  
 - **📄 Multi-Format Support**: Handles PDF, DOCX, TXT, and even scanned documents with OCR
 - **📊 Detailed Reporting**: Excel exports with contact sheets and comprehensive candidate analysis
 - **🖥️ Dual Interface**: Both command-line and web-based (Streamlit) interfaces
@@ -16,122 +36,76 @@ A powerful, AI-driven resume screening system designed specifically for the hosp
 
 ## 🚀 Quick Start
 
-### Option 1: Command Line Interface
+### Web Interface (Recommended)
 ```bash
-# Install dependencies
+# 1. Install dependencies
 pip install -r requirements.txt
+python -m spacy download en_core_web_sm
+
+# 2. Install Tesseract OCR
+# Windows: Run Install_Tesseract_OCR.bat
+# Mac: brew install tesseract
+# Linux: sudo apt-get install tesseract-ocr
+
+# 3. Launch web interface
+streamlit run streamlit_app.py
+```
+
+### Command Line Interface
+```bash
+# Install dependencies (same as above)
+pip install -r requirements.txt
+python -m spacy download en_core_web_sm
 
 # Run the screener
 python hotel_ai_screener.py
 ```
 
-### Option 2: Web Interface
+### Demo Mode
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Launch web interface
-streamlit run streamlit_app.py
+# See capabilities without setup
+python demo.py
+# or
+Run_Demo.bat
 ```
 
-## 📋 Supported Positions
+## 📋 Supported Hotel Positions
 
 **Front of House:**
-- Front Desk Agent
-- Guest Services Agent
-- Concierge
+- Front Desk Agent, Guest Services Agent, Concierge, Night Auditor
 
 **Food & Beverage:**
-- Executive Chef
-- Sous Chef
-- Line Cook
-- Bartender
-- Server
+- Executive Chef, Sous Chef, Line Cook, Bartender, Server, Restaurant Manager
 
 **Operations:**
-- Housekeeping Supervisor
-- Room Attendant
-- Security Officer
-- Maintenance Technician
+- Hotel Manager, Assistant Manager, Housekeeping Manager, Housekeeper, Maintenance
 
-**Sales & Events:**
-- Sales Manager
-- Event Coordinator
-
-*Plus support for custom positions*
-
-## 🔧 Installation
-
-### Prerequisites
-- Python 3.10 or higher
-- For OCR support: [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki)
-
-### Step-by-Step Setup
-
-1. **Clone or download the repository**
-   ```bash
-   git clone https://github.com/yourusername/hotel-ai-screener.git
-   cd hotel-ai-screener
-   ```
-
-2. **Install Python dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Optional: Install Tesseract for OCR**
-   - Windows: Download from [Tesseract Wiki](https://github.com/UB-Mannheim/tesseract/wiki)
-   - macOS: `brew install tesseract`
-   - Linux: `sudo apt-get install tesseract-ocr`
-
-4. **Test the installation**
-   ```bash
-   python hotel_ai_screener.py
-   ```
-
-## 📖 How It Works
-
-### 1. Upload Resumes
-Place resume files (PDF, DOCX, TXT) in the `input_resumes/` folder or upload via web interface.
-
-### 2. Select Position
-Choose from pre-configured hotel positions or enter a custom role.
-
-### 3. AI Analysis
-The system analyzes each resume for:
-- **Skills Match**: Required and preferred skills for the position
-- **Experience Relevance**: Years of experience and industry background
-- **Cultural Fit**: Personality traits and work style indicators
-- **Hospitality Background**: Hotel, resort, and service industry experience
-
-### 4. Smart Scoring
-Each candidate receives an AI score (0-100%) based on:
-- **Experience Weight** (30%): Years and relevance of experience
-- **Skills Weight** (25%): Technical and soft skills match
-- **Cultural Fit Weight** (25%): Personality and work style alignment
-- **Hospitality Weight** (20%): Industry-specific experience
-
-### 5. Results & Export
-Get ranked candidates with:
-- ✅ **Contact Information**: Name, phone, email, location
-- ✅ **AI Score & Recommendation**: Detailed scoring breakdown
-- ✅ **Strengths & Weaknesses**: Specific feedback for each candidate
-- ✅ **Excel Reports**: HR-ready contact sheets and detailed analysis
+**Specialized:**
+- Security Officer, Sales Manager, Event Coordinator
 
 ## 📊 Sample Output
 
+**Console Results:**
 ```
-🏆 TOP CANDIDATES:
-  1. Sarah Johnson - 92.5% (Highly Recommended - Excellent match for the position)
-  2. Mike Chen - 87.3% (Highly Recommended - Excellent match for the position)  
-  3. Lisa Rodriguez - 78.9% (Recommended - Good candidate with minor gaps)
-  4. Tom Williams - 71.2% (Recommended - Good candidate with minor gaps)
-  5. Amy Taylor - 68.4% (Recommended - Good candidate with minor gaps)
+🏆 TOP CANDIDATES FOR FRONT DESK AGENT:
+  1. Sarah Johnson - 94.2% (Highly Recommended)
+     📧 sarah.j@email.com | 📞 (555) 123-4567
+     💪 Strengths: 5+ years hotel experience, PMS systems, multilingual
+  
+  2. Mike Chen - 87.3% (Recommended)
+     📧 mchen@email.com | 📞 (555) 987-6543  
+     💪 Strengths: Customer service excellence, team leadership
 ```
 
-## ⚙️ Configuration
+**Excel Export Includes:**
+- 📊 Ranked candidate summary with scores
+- 📧 Contact information extraction
+- 💼 Skills analysis and recommendations
+- 📁 Organized resume copies for top candidates
 
-Customize the screening criteria by editing `hotel_config.yaml`:
+## 🛠️ Customization
+
+Edit `hotel_config.yaml` to customize for your property:
 
 ```yaml
 positions:
@@ -139,97 +113,64 @@ positions:
     must_have_skills:
       - customer service
       - computer skills
-      - communication
     nice_to_have_skills:
       - hotel experience
-      - PMS systems
+      - multilingual
     cultural_fit_keywords:
       - team player
-      - friendly
-      - professional
-    experience_weight: 0.3
-    skills_weight: 0.25
-    cultural_fit_weight: 0.25
-    hospitality_weight: 0.2
+      - positive attitude
 ```
 
-## 🛠️ Advanced Features
+## 📦 Installation Details
 
-### OCR Support
-Automatically processes scanned PDFs and image-based resumes using Tesseract OCR.
+### Requirements
+- **Python 3.10+**
+- **Tesseract OCR** (for scanned documents)
+- **spaCy English model** (`en_core_web_sm`)
 
-### Skill Synonyms
-Smart matching recognizes equivalent terms:
-- "customer service" = "guest service" = "client service"
-- "hotel experience" = "hospitality" = "resort"
+### Dependencies
+- `streamlit` - Web interface
+- `pandas` - Data processing  
+- `openpyxl` - Excel export
+- `python-docx` - Word document parsing
+- `PyPDF2` - PDF parsing
+- `pytesseract` - OCR functionality
+- `spacy` - Natural language processing
 
-### Export Options
-- **Excel Reports**: Detailed analysis with multiple sheets
-- **CSV Exports**: Contact lists and qualified candidates
-- **Resume Copies**: Organized folders with top candidates' resumes
+## 🔧 Troubleshooting
 
-## 🔒 Privacy & Security
+**Tesseract OCR Issues:**
+- Windows: Run `Install_Tesseract_OCR.bat` as administrator
+- Mac: `brew install tesseract`
+- Linux: `sudo apt-get install tesseract-ocr`
 
-- **100% Local Processing**: No data sent to external services
-- **No Internet Required**: Works completely offline after installation  
-- **Your Data Stays Private**: All resume data remains on your computer
-- **No Accounts or Logins**: Simple file-based operation
-
-## 📱 System Requirements
-
-- **Operating System**: Windows, macOS, or Linux
-- **Python**: 3.10 or higher
-- **Memory**: 4GB RAM minimum, 8GB recommended
-- **Storage**: 1GB free space for dependencies
-- **Optional**: Tesseract OCR for scanned document support
-
-## 🆘 Troubleshooting
-
-### Common Issues
-
-**"No module named 'streamlit'"**
+**spaCy Model Missing:**
 ```bash
-pip install streamlit
+python -m spacy download en_core_web_sm
 ```
 
-**"Tesseract not found"**
-- Install Tesseract OCR from the official repository
-- Ensure it's added to your system PATH
-
-**"No text extracted from PDF"**
-- Try installing additional dependencies: `pip install PyPDF2 pdfminer.six`
-- For scanned PDFs, install Tesseract OCR
-
-**Import errors**
-```bash
-pip install --upgrade -r requirements.txt
-```
+**Excel Export Errors:**
+The system automatically falls back to CSV if Excel libraries are unavailable.
 
 ## 🤝 Contributing
 
-We welcome contributions! Here's how you can help:
-
-1. **Add New Positions**: Expand the job intelligence database
-2. **Improve Scoring**: Enhance the AI scoring algorithms  
-3. **Add Features**: New export formats, integrations, or UI improvements
-4. **Fix Bugs**: Report issues and submit fixes
-5. **Documentation**: Improve setup guides and usage examples
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 👨‍💻 Author
-
-Created by **Chris** - A comprehensive solution for modern hotel recruitment.
-
 ## 🙏 Acknowledgments
 
-- Built with Python, Pandas, and Streamlit
-- OCR support powered by Tesseract
-- PDF processing via pdfminer and PyPDF2
-- Document parsing with python-docx
+- Built for the hospitality industry
+- Powered by spaCy and modern NLP techniques
+- Designed for privacy and local operation
+- Optimized for hotel hiring workflows
 
 ---
 
-**Transform your hiring process with AI-powered candidate screening for the hospitality industry!** 🏨✨
+**Perfect for hotels looking to streamline hiring and find the best candidates faster! 🏨✨**

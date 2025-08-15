@@ -1,5 +1,5 @@
 # Hotel Applicant Tracker (HOT)
-AI-powered hotel resume screener with drag-and-drop UI, OCR for scanned PDFs, role-aware scoring, and instant Excel/CSV reports.
+**AI-powered resume screener for hotels.** Drag-and-drop resumes, OCR for scanned PDFs, role-aware scoring from a YAML profile, instant shortlist export to CSV/Excel, and transparent scoring breakdowns.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Made with Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
@@ -8,37 +8,26 @@ AI-powered hotel resume screener with drag-and-drop UI, OCR for scanned PDFs, ro
 
 > **📸 Screenshot Coming Soon:** Upload your screenshots to `assets/hot-ui.png` to complete the README!
 
-## 60-second run
+## 30-second Quickstart
 ```bash
+python -m venv .venv && .venv\Scripts\activate  # Windows (.venv/bin/activate on Mac/Linux)
 pip install -r requirements.txt
 python -m spacy download en_core_web_sm
-# Install Tesseract OCR (Windows: Install_Tesseract_OCR.bat | Mac: brew install tesseract)
 streamlit run streamlit_app.py
 ```
 
-**Try it:** drag PDFs/DOCX/TXT → pick a role → click **Run Screening** → download the Excel.
+**Try the demo data:** Use sample resumes in `input_resumes/` → pick "Front Desk Agent" → click **Run Screening** → download Excel.
 
-## How to Evaluate (30 seconds)
-1. **🌐 Launch UI**: `streamlit run streamlit_app.py` 
-2. **📁 Drop samples**: Use resumes from `input_resumes/` folder
-3. **📊 Download Excel**: Get ranked candidates with contact info
+## Features
 
-## Quick Evaluation Script
-```bash
-python evaluate.py  # Interactive 30-second demo
-```
-
----
-
-## 🌟 Features
-
-- **🤖 AI-Powered Analysis**: Advanced algorithms evaluate candidates based on skills, experience, and cultural fit
-- **🏨 Hotel-Specific Intelligence**: Pre-configured requirements for 15+ common hotel positions  
-- **📄 Multi-Format Support**: Handles PDF, DOCX, TXT, and even scanned documents with OCR
-- **📊 Detailed Reporting**: Excel exports with contact sheets and comprehensive candidate analysis
-- **🖥️ Dual Interface**: Both command-line and web-based (Streamlit) interfaces
-- **🔒 Privacy First**: 100% local processing - no data sent to external services
-- **⚡ Fast & Efficient**: Process dozens of resumes in minutes
+- **📄 OCR for scans:** Reads text from scanned PDFs and images with Tesseract
+- **⚙️ Role presets:** Configure requirements via `hotel_config.yaml` (15+ hotel positions included)
+- **� Skill/tenure scoring:** Weighted algorithms for experience, skills, and cultural fit
+- **📊 CSV/Excel export:** Instant shortlists with contact info and scoring breakdowns
+- **� Duplicate detection:** Identifies potential duplicate candidates
+- **⚖️ Bias guardrails:** Ignores name/age/photo fields during scoring, focuses on qualifications
+- **🖥️ Dual interface:** Web UI for HR teams, CLI for power users
+- **🔒 Privacy-first:** 100% local processing, no data sent to external services
 
 ## 🚀 Quick Start
 
@@ -88,6 +77,27 @@ Run_Demo.bat
 
 **Specialized:**
 - Security Officer, Sales Manager, Event Coordinator
+
+## Config
+
+Role requirements are defined in `hotel_config.yaml`:
+
+```yaml
+positions:
+  front_desk_agent:
+    must_have_skills: [customer service, computer skills, communication]
+    nice_to_have_skills: [hotel experience, multilingual, PMS systems]
+    cultural_fit_keywords: [team player, positive attitude, professional]
+    experience_weight: 0.3
+    skills_weight: 0.4
+    cultural_fit_weight: 0.3
+```
+
+## Demo Data
+
+**Try with included samples:** The `input_resumes/` folder contains 15+ sample resumes for testing different hotel positions. Perfect for evaluating the system before adding your own candidate data.
+
+**Preset roles available:** Front Desk Agent, Executive Chef, Housekeeping Manager, Security Officer, Sales Manager, and 10+ more hotel positions.
 
 ## 📊 Sample Output
 
@@ -157,6 +167,26 @@ python -m spacy download en_core_web_sm
 
 **Excel Export Errors:**
 The system automatically falls back to CSV if Excel libraries are unavailable.
+
+## 🗺️ Roadmap
+
+- [ ] **Dockerfile** for containerized deployment
+- [ ] **Multi-role batch scoring** for processing large candidate pools
+- [ ] **Job description parser** to auto-generate role requirements
+- [ ] **SQLite persistence** for candidate history and analytics
+- [ ] **Simple authentication** for multi-user hotel chains
+- [ ] **Streamlit Community Cloud** one-click deploy
+- [ ] **REST API** for integration with existing HR systems
+- [ ] **Bias detection reports** and fairness metrics
+
+## 🚀 One-Click Deploy
+
+Deploy to Streamlit Community Cloud in 60 seconds:
+1. Fork this repository
+2. Visit [share.streamlit.io](https://share.streamlit.io)
+3. Connect your GitHub account
+4. Select this repo and `streamlit_app.py`
+5. Click Deploy!
 
 ## 🤝 Contributing
 

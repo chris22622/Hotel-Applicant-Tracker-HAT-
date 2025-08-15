@@ -1,0 +1,169 @@
+/* Custom styles for HR ATS */
+
+:root {
+    --primary-color: #2563eb;
+    --secondary-color: #64748b;
+    --success-color: #059669;
+    --warning-color: #d97706;
+    --danger-color: #dc2626;
+    --light-bg: #f8fafc;
+    --border-color: #e2e8f0;
+}
+
+body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background-color: var(--light-bg);
+}
+
+.navbar-brand {
+    font-weight: 700;
+    color: var(--primary-color) !important;
+}
+
+.card {
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+}
+
+.btn-primary {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+.btn-primary:hover {
+    background-color: #1d4ed8;
+    border-color: #1d4ed8;
+}
+
+.score-pill {
+    background: linear-gradient(135deg, var(--success-color), var(--primary-color));
+    color: white;
+    padding: 0.25rem 0.75rem;
+    border-radius: 1rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+}
+
+.candidate-card {
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.candidate-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px 0 rgba(0, 0, 0, 0.15);
+}
+
+.skills-badge {
+    background-color: var(--secondary-color);
+    color: white;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    margin: 0.125rem;
+    display: inline-block;
+}
+
+.upload-zone {
+    border: 2px dashed var(--border-color);
+    border-radius: 0.5rem;
+    padding: 2rem;
+    text-align: center;
+    background-color: white;
+    transition: border-color 0.2s;
+}
+
+.upload-zone:hover {
+    border-color: var(--primary-color);
+}
+
+.upload-zone.dragover {
+    border-color: var(--primary-color);
+    background-color: #eff6ff;
+}
+
+.kanban-column {
+    background-color: white;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    margin: 0.5rem;
+    min-height: 500px;
+    border: 1px solid var(--border-color);
+}
+
+.kanban-item {
+    background-color: white;
+    border: 1px solid var(--border-color);
+    border-radius: 0.375rem;
+    padding: 0.75rem;
+    margin: 0.5rem 0;
+    cursor: pointer;
+    transition: box-shadow 0.2s;
+}
+
+.kanban-item:hover {
+    box-shadow: 0 2px 8px 0 rgba(0, 0, 0, 0.1);
+}
+
+.stage-new { border-left: 4px solid var(--secondary-color); }
+.stage-screened { border-left: 4px solid var(--warning-color); }
+.stage-interview { border-left: 4px solid var(--primary-color); }
+.stage-offer { border-left: 4px solid var(--success-color); }
+.stage-hired { border-left: 4px solid var(--success-color); }
+.stage-rejected { border-left: 4px solid var(--danger-color); }
+
+.debias-toggle {
+    background-color: var(--warning-color);
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    cursor: pointer;
+}
+
+.debias-active {
+    background-color: var(--success-color);
+}
+
+.loading-spinner {
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid var(--primary-color);
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    animation: spin 1s linear infinite;
+    display: inline-block;
+    margin-right: 0.5rem;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.table th {
+    background-color: var(--light-bg);
+    font-weight: 600;
+    border-bottom: 2px solid var(--border-color);
+}
+
+.explanation-popover {
+    max-width: 300px;
+    font-size: 0.875rem;
+}
+
+.progress-sm {
+    height: 0.5rem;
+}
+
+@media (max-width: 768px) {
+    .kanban-column {
+        margin: 0.25rem;
+        padding: 0.75rem;
+    }
+    
+    .table-responsive {
+        font-size: 0.875rem;
+    }
+}
