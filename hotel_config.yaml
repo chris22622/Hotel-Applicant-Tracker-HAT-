@@ -1,0 +1,408 @@
+# Hotel AI Resume Screener Configuration
+# Customize job requirements and scoring weights for your property
+
+# Position-specific requirements and scoring
+positions:
+  # Front of House Positions
+  front_desk_agent:
+    must_have_skills:
+      - customer service
+      - computer skills
+      - communication
+      - multitasking
+      - phone skills
+    nice_to_have_skills:
+      - hotel experience
+      - PMS systems
+      - Opera
+      - guest services
+      - check-in/check-out
+      - multilingual
+    cultural_fit_keywords:
+      - team player
+      - friendly
+      - professional
+      - positive attitude
+      - guest-focused
+    experience_weight: 0.3
+    skills_weight: 0.25
+    cultural_fit_weight: 0.25
+    hospitality_weight: 0.2
+
+  guest_services_agent:
+    must_have_skills:
+      - customer service
+      - communication
+      - problem solving
+      - computer skills
+      - hospitality
+    nice_to_have_skills:
+      - concierge experience
+      - guest relations
+      - tour booking
+      - multilingual
+      - local knowledge
+    cultural_fit_keywords:
+      - helpful
+      - friendly
+      - professional
+      - service oriented
+      - proactive
+    experience_weight: 0.3
+    skills_weight: 0.25
+    cultural_fit_weight: 0.25
+    hospitality_weight: 0.2
+
+  concierge:
+    must_have_skills:
+      - customer service
+      - local knowledge
+      - communication
+      - organization
+      - problem solving
+    nice_to_have_skills:
+      - luxury hospitality
+      - event planning
+      - restaurant knowledge
+      - tour coordination
+      - wine knowledge
+    cultural_fit_keywords:
+      - sophisticated
+      - knowledgeable
+      - helpful
+      - professional
+      - well-connected
+    experience_weight: 0.35
+    skills_weight: 0.3
+    cultural_fit_weight: 0.2
+    hospitality_weight: 0.15
+
+  # Food & Beverage Positions
+  executive_chef:
+    must_have_skills:
+      - culinary arts
+      - kitchen management
+      - food safety
+      - menu planning
+      - cost control
+      - staff supervision
+    nice_to_have_skills:
+      - fine dining
+      - international cuisine
+      - dietary restrictions
+      - large volume cooking
+      - wine pairing
+    cultural_fit_keywords:
+      - creative
+      - leader
+      - organized
+      - passionate
+      - detail-oriented
+    experience_weight: 0.4
+    skills_weight: 0.3
+    cultural_fit_weight: 0.15
+    hospitality_weight: 0.15
+
+  sous_chef:
+    must_have_skills:
+      - cooking
+      - food preparation
+      - kitchen operations
+      - food safety
+      - team work
+    nice_to_have_skills:
+      - menu development
+      - inventory management
+      - staff training
+      - multiple cuisines
+    cultural_fit_keywords:
+      - reliable
+      - creative
+      - team player
+      - adaptable
+      - efficient
+    experience_weight: 0.35
+    skills_weight: 0.3
+    cultural_fit_weight: 0.2
+    hospitality_weight: 0.15
+
+  line_cook:
+    must_have_skills:
+      - food preparation
+      - cooking techniques
+      - food safety
+      - speed
+      - accuracy
+    nice_to_have_skills:
+      - grill experience
+      - sauté
+      - prep work
+      - high volume
+      - special diets
+    cultural_fit_keywords:
+      - fast-paced
+      - reliable
+      - team player
+      - focused
+      - consistent
+    experience_weight: 0.3
+    skills_weight: 0.35
+    cultural_fit_weight: 0.2
+    hospitality_weight: 0.15
+
+  bartender:
+    must_have_skills:
+      - mixology
+      - customer service
+      - cash handling
+      - multitasking
+      - product knowledge
+    nice_to_have_skills:
+      - craft cocktails
+      - wine knowledge
+      - beer knowledge
+      - inventory
+      - POS systems
+    cultural_fit_keywords:
+      - personable
+      - energetic
+      - professional
+      - friendly
+      - entertaining
+    experience_weight: 0.3
+    skills_weight: 0.3
+    cultural_fit_weight: 0.25
+    hospitality_weight: 0.15
+
+  server:
+    must_have_skills:
+      - customer service
+      - food knowledge
+      - multitasking
+      - communication
+      - cash handling
+    nice_to_have_skills:
+      - fine dining
+      - wine service
+      - allergen knowledge
+      - upselling
+      - POS systems
+    cultural_fit_keywords:
+      - friendly
+      - attentive
+      - professional
+      - team player
+      - energetic
+    experience_weight: 0.25
+    skills_weight: 0.3
+    cultural_fit_weight: 0.25
+    hospitality_weight: 0.2
+
+  # Housekeeping Positions
+  housekeeping_supervisor:
+    must_have_skills:
+      - housekeeping
+      - supervision
+      - time management
+      - quality control
+      - team leadership
+    nice_to_have_skills:
+      - hotel housekeeping
+      - inventory management
+      - training
+      - scheduling
+      - budget management
+    cultural_fit_keywords:
+      - detail oriented
+      - reliable
+      - organized
+      - team leader
+      - efficient
+    experience_weight: 0.35
+    skills_weight: 0.3
+    cultural_fit_weight: 0.2
+    hospitality_weight: 0.15
+
+  room_attendant:
+    must_have_skills:
+      - cleaning
+      - attention to detail
+      - time management
+      - physical stamina
+      - organization
+    nice_to_have_skills:
+      - hotel cleaning
+      - laundry
+      - inventory
+      - guest interaction
+    cultural_fit_keywords:
+      - thorough
+      - reliable
+      - efficient
+      - professional
+      - hardworking
+    experience_weight: 0.25
+    skills_weight: 0.35
+    cultural_fit_weight: 0.25
+    hospitality_weight: 0.15
+
+  # Security & Maintenance
+  security_officer:
+    must_have_skills:
+      - security
+      - surveillance
+      - incident reporting
+      - safety protocols
+      - communication
+    nice_to_have_skills:
+      - hotel security
+      - CCTV
+      - emergency response
+      - guest relations
+      - crowd control
+    cultural_fit_keywords:
+      - alert
+      - responsible
+      - professional
+      - calm under pressure
+      - observant
+    experience_weight: 0.4
+    skills_weight: 0.3
+    cultural_fit_weight: 0.15
+    hospitality_weight: 0.15
+
+  maintenance_technician:
+    must_have_skills:
+      - mechanical skills
+      - electrical
+      - plumbing
+      - HVAC
+      - troubleshooting
+    nice_to_have_skills:
+      - hotel maintenance
+      - preventive maintenance
+      - pool maintenance
+      - carpentry
+    cultural_fit_keywords:
+      - handy
+      - problem solver
+      - reliable
+      - safety conscious
+      - proactive
+    experience_weight: 0.4
+    skills_weight: 0.35
+    cultural_fit_weight: 0.15
+    hospitality_weight: 0.1
+
+  # Sales & Events
+  sales_manager:
+    must_have_skills:
+      - sales
+      - customer relationship
+      - communication
+      - negotiation
+      - organization
+    nice_to_have_skills:
+      - hotel sales
+      - event planning
+      - group bookings
+      - revenue management
+      - CRM
+    cultural_fit_keywords:
+      - persuasive
+      - relationship builder
+      - goal oriented
+      - professional
+      - confident
+    experience_weight: 0.35
+    skills_weight: 0.3
+    cultural_fit_weight: 0.2
+    hospitality_weight: 0.15
+
+  event_coordinator:
+    must_have_skills:
+      - event planning
+      - organization
+      - communication
+      - time management
+      - attention to detail
+    nice_to_have_skills:
+      - hotel events
+      - wedding planning
+      - vendor management
+      - budget management
+    cultural_fit_keywords:
+      - organized
+      - creative
+      - calm under pressure
+      - detail oriented
+      - flexible
+    experience_weight: 0.3
+    skills_weight: 0.3
+    cultural_fit_weight: 0.25
+    hospitality_weight: 0.15
+
+# Skill synonym mapping for better matching
+skill_synonyms:
+  customer_service:
+    - guest service
+    - client service
+    - customer care
+    - guest relations
+    - service excellence
+  
+  communication:
+    - verbal communication
+    - written communication
+    - interpersonal
+    - people skills
+    - presentation skills
+  
+  hotel_experience:
+    - hospitality
+    - resort
+    - accommodation
+    - lodging
+    - guest experience
+  
+  food_service:
+    - restaurant
+    - dining
+    - culinary
+    - kitchen
+    - food preparation
+  
+  computer_skills:
+    - microsoft office
+    - excel
+    - word
+    - software
+    - technology
+    - PMS systems
+  
+  leadership:
+    - management
+    - supervision
+    - team lead
+    - coordinator
+    - director
+
+# OCR configuration
+ocr:
+  enabled: true
+  dpi: 300
+  max_pages: 3
+
+# Output configuration  
+output:
+  excel_detailed: true
+  csv_export: true
+  create_folders: true
+  copy_resumes: true
+
+# Scoring thresholds
+scoring:
+  highly_recommended: 80
+  recommended: 60
+  consider: 40
+  minimum_viable: 20
