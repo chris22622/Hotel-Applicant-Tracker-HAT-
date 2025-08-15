@@ -1,45 +1,62 @@
 # Hotel Applicant Tracker (HOT)
 
-**AI-powered resume screener for hotels.** Drag-and-drop resumes, OCR for scanned PDFs, role-aware scoring from YAML config, instant Excel/CSV export, and transparent scoring breakdowns.
+Smart, AI-powered resume screening for **hotels and resorts** with **OCR**, **role-aware scoring**, and **instant Excel reports**. Clean `hotel_ai_screener.py` core, CI-ready, and easy for hiring managers to evaluate.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
-[![Streamlit](https://img.shields.io/badge/Streamlit-App-FF6B6B.svg)](https://streamlit.io)
-[![Code Quality](https://github.com/chris22622/Hotel-Applicant-Tracker-HOT-/workflows/CI/badge.svg)](https://github.com/chris22622/Hotel-Applicant-Tracker-HOT-/actions)
+[![CI](https://github.com/chris22622/Hotel-Applicant-Tracker-HOT-/workflows/CI/badge.svg)](https://github.com/chris22622/Hotel-Applicant-Tracker-HOT-/actions)
+![Python](https://img.shields.io/badge/Python-3.10+-blue)
+![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 
-## 🚀 30-Second Quickstart
+> _"Screen honestly. Rank fairly. Hire the best candidates faster."_
 
+![Screenshot](assets/hot-ui.png)
+*(Add a screenshot to `assets/hot-ui.png` and it will render above.)*
+
+---
+
+## ✨ Features
+- **Dual interface:** Web UI for HR teams, CLI for power users.
+- **OCR-powered:** Reads scanned PDFs and image-based documents.
+- **Role-aware:** 15+ hotel positions pre-configured (Front Desk, Chef, Manager, etc.).
+- **Bias guardrails:** Ignores demographics, focuses on qualifications.
+- **Smart scoring:** Experience + Skills + Cultural fit with transparent weights.
+- **Instant exports:** Excel/CSV with contact info and ranking breakdowns.
+- **Privacy-first:** 100% local processing, no external data sharing.
+
+---
+
+## 🚀 Quickstart (30 sec)
+
+### 1) Setup
 ```bash
-python -m venv .venv && .venv\Scripts\activate  # Windows (.venv/bin/activate on Mac/Linux)
+python -m venv .venv && .venv\Scripts\activate    # Windows (.venv/bin/activate on Mac/Linux)
 pip install -r requirements.txt
 python -m spacy download en_core_web_sm
+# Install Tesseract OCR: Windows (Install_Tesseract_OCR.bat) | Mac (brew install tesseract)
+```
+
+### 2) Web Interface (Recommended)
+```bash
 streamlit run streamlit_app.py
 ```
 
-**Try the demo:** Use sample resumes in `input_resumes/` → select "Front Desk Agent" → click **Run Screening** → download Excel.
+### 3) Try the Demo Data
+- Upload resumes from `input_resumes/` folder (15+ samples included)
+- Select "Front Desk Agent" position
+- Click **Run Screening**
+- Download Excel report with ranked candidates
 
-## ✨ Features
+### 4) Command Line (Power Users)
+```bash
+python hotel_ai_screener.py
+# or headless mode:
+python cli.py --input input_resumes/ --position front_desk_agent --output results.json
+```
 
-- **📄 OCR for scans** → Reads text from scanned PDFs and images
-- **⚙️ Role presets** → Configure via `hotel_config.yaml` (15+ positions included)
-- **🧮 Smart scoring** → Weighted algorithms for experience, skills, cultural fit
-- **📊 Excel/CSV export** → Instant shortlists with contact info and breakdowns
-- **🔍 Duplicate detection** → Identifies potential duplicate candidates
-- **⚖️ Bias guardrails** → Ignores demographic fields, focuses on qualifications
-- **🖥️ Dual interface** → Web UI for HR teams, CLI for power users
-- **🔒 Privacy-first** → 100% local processing, no external data transfer
+---
 
-## 🎯 How to Evaluate (60 seconds)
+## 🔧 Configuration (YAML)
 
-1. **🌐 Launch UI**: `streamlit run streamlit_app.py`
-2. **📁 Upload resumes**: Drag PDF/DOCX/TXT files or use samples from `input_resumes/`
-3. **🎯 Select position**: Choose from 15+ hotel roles (Front Desk, Chef, Manager, etc.)
-4. **▶️ Run screening**: Click "Run Screening" and wait for AI analysis
-5. **📊 Download results**: Get Excel with ranked candidates and contact info
-
-## 📋 Config Example
-
-Role requirements in `hotel_config.yaml`:
+`hotel_config.yaml` example:
 
 ```yaml
 positions:
@@ -47,8 +64,146 @@ positions:
     must_have_skills: [customer service, computer skills, communication]
     nice_to_have_skills: [hotel experience, multilingual, PMS systems]
     cultural_fit_keywords: [team player, positive attitude, professional]
-    weights: { experience: 0.3, skills: 0.4, cultural_fit: 0.3 }
+    weights:
+      experience: 0.3
+      skills: 0.4
+      cultural_fit: 0.3
+  executive_chef:
+    must_have_skills: [culinary arts, food safety, team leadership]
+    nice_to_have_skills: [fine dining, menu development, cost control]
+    cultural_fit_keywords: [creative, detail oriented, passionate]
+    weights:
+      experience: 0.4
+      skills: 0.4
+      cultural_fit: 0.2
 ```
+
+---
+
+## 🔑 Environment (.env)
+
+Optional configuration:
+
+```dotenv
+# OCR Configuration
+TESSERACT_CMD=/usr/local/bin/tesseract  # Custom Tesseract path if needed
+
+# Logging
+LOG_LEVEL=INFO
+LOG_FILE=logs/app.log
+
+# Application Settings
+MAX_FILE_SIZE_MB=10
+SUPPORTED_FORMATS=pdf,docx,txt
+DEFAULT_POSITION=front_desk_agent
+```
+
+---
+
+## 📊 Sample Output
+
+**Console Results:**
+```
+🏆 TOP CANDIDATES FOR FRONT DESK AGENT:
+  1. Sarah Johnson - 92.5% (Highly Recommended)
+     📧 sarah.j@email.com | 📞 (555) 123-4567
+     💪 Strengths: 5+ years hotel experience, PMS systems, trilingual
+  
+  2. Mike Chen - 87.3% (Recommended)
+     📧 mchen@email.com | 📞 (555) 987-6543
+     💪 Strengths: Customer service excellence, team leadership
+```
+
+**Excel Export Includes:**
+- 📊 Ranked candidate summary with scores
+- 📧 Contact information extraction
+- 💼 Skills analysis and recommendations
+- 📁 Organized resume copies for top candidates
+
+---
+
+## 🧱 Project Structure
+
+```
+Hotel-Applicant-Tracker-HOT-/
+├─ hotel_ai_screener.py   # Core AI screening engine
+├─ streamlit_app.py       # Web interface
+├─ cli.py                 # Headless command-line tool
+├─ hotel_config.yaml      # Position requirements & scoring
+├─ input_resumes/         # Sample resumes for testing
+├─ screening_results/     # Output reports and organized files
+├─ tests/                 # pytest suite with smoke tests
+├─ assets/                # Screenshots and visual assets
+├─ .streamlit/            # Streamlit theming and config
+├─ requirements.txt       # Python dependencies
+└─ README.md
+```
+
+---
+
+## � Docker (optional)
+
+```bash
+docker build -t hotel-ats .
+docker run -p 8501:8501 hotel-ats
+# Access at http://localhost:8501
+```
+
+---
+
+## 🚀 Deploy Options
+
+### Streamlit Community Cloud (Free)
+1. Fork this repository
+2. Visit [share.streamlit.io](https://share.streamlit.io)
+3. Connect GitHub and deploy `streamlit_app.py`
+
+### Local Installation
+```bash
+git clone https://github.com/chris22622/Hotel-Applicant-Tracker-HOT-.git
+cd Hotel-Applicant-Tracker-HOT-
+python -m venv .venv && .venv\Scripts\activate
+pip install -r requirements.txt
+python -m spacy download en_core_web_sm
+streamlit run streamlit_app.py
+```
+
+---
+
+## 📈 CI & Quality
+
+* CI runs lint + tests on push/PR (badge above).
+* Smoke tests validate repo structure and imports.
+* Bias detection tests ensure fair candidate evaluation.
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions! Perfect for:
+- Adding new hotel position templates
+- Improving OCR accuracy for scanned documents
+- Expanding bias detection and fairness metrics
+- UI/UX enhancements for the Streamlit interface
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and good first issues.
+
+---
+
+## ⚠️ Fair Hiring Notice
+
+This tool is designed to **assist**, not replace, human judgment in hiring. Always review AI recommendations and ensure compliance with local employment laws and fair hiring practices.
+
+---
+
+## 📝 License
+
+MIT © **Chrissano Leslie**  
+See [LICENSE](LICENSE).
+
+---
+
+**Perfect for hotels looking to streamline hiring and find the best candidates faster! 🏨✨**
 
 ## 📊 Sample Output
 
