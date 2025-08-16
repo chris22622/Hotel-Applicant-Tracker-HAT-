@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Quick Evaluation Script for Hotel Applicant Tracker (HOT)
+Quick Evaluation Script for Hotel-Applicant-Tracker-HAT-
 Run this to see the system in action with sample data in 30 seconds.
 """
 
@@ -77,7 +77,7 @@ def launch_web_interface():
 
 def main():
     """Main evaluation workflow"""
-    print("🏨 HOTEL APPLICANT TRACKER (HOT) - QUICK EVALUATION")
+    print("🏨 HOTEL-APPLICANT-TRACKER-HAT- - QUICK EVALUATION")
     print("=" * 55)
     
     # Check dependencies

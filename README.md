@@ -1,15 +1,15 @@
-# Hotel Applicant Tracker (HOT)
+# Hotel AI Resume Screener
 
 Smart, AI-powered resume screening for **hotels and resorts** with **OCR**, **role-aware scoring**, and **instant Excel reports**. Clean `hotel_ai_screener.py` core, CI-ready, and easy for hiring managers to evaluate.
 
-[![CI](https://github.com/chris22622/Hotel-Applicant-Tracker-HOT-/workflows/CI/badge.svg)](https://github.com/chris22622/Hotel-Applicant-Tracker-HOT-/actions)
+[![CI](https://github.com/chris22622/Hotel-Applicant-Tracker-HAT-/workflows/CI/badge.svg)](https://github.com/chris22622/Hotel-Applicant-Tracker-HAT-/actions)
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 
 > _"Screen honestly. Rank fairly. Hire the best candidates faster."_
 
-![Screenshot](assets/hot-ui.png)
-*(Add a screenshot to `assets/hot-ui.png` and it will render above.)*
+![Screenshot](assets/hat-ui.png)
+*(Add a screenshot to `assets/hat-ui.png` and it will render above.)*
 
 ---
 
@@ -125,7 +125,7 @@ DEFAULT_POSITION=front_desk_agent
 ## 🧱 Project Structure
 
 ```
-Hotel-Applicant-Tracker-HOT-/
+Hotel-Applicant-Tracker-HAT-/
 ├─ hotel_ai_screener.py   # Core AI screening engine
 ├─ streamlit_app.py       # Web interface
 ├─ cli.py                 # Headless command-line tool
@@ -160,8 +160,8 @@ docker run -p 8501:8501 hotel-ats
 
 ### Local Installation
 ```bash
-git clone https://github.com/chris22622/Hotel-Applicant-Tracker-HOT-.git
-cd Hotel-Applicant-Tracker-HOT-
+git clone https://github.com/chris22622/Hotel-Applicant-Tracker-HAT-.git
+cd Hotel-Applicant-Tracker-HAT-
 python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
 python -m spacy download en_core_web_sm
@@ -228,8 +228,8 @@ See [LICENSE](LICENSE).
 ### Setup
 ```bash
 # Clone and setup
-git clone https://github.com/chris22622/Hotel-Applicant-Tracker-HOT-.git
-cd Hotel-Applicant-Tracker-HOT-
+git clone https://github.com/chris22622/Hotel-Applicant-Tracker-HAT-.git
+cd Hotel-Applicant-Tracker-HAT-
 python -m venv .venv && .venv\Scripts\activate
 
 # Install dependencies

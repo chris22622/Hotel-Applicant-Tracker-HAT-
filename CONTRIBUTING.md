@@ -1,11 +1,11 @@
-# Contributing to Hotel Applicant Tracker (HOT)
+# Contributing to Hotel-Applicant-Tracker-HAT-
 
 Thank you for your interest in contributing! This project helps hotels streamline their hiring process with AI-powered resume screening.
 
 ## 🚀 Quick Start for Contributors
 
 1. **Fork** the repository
-2. **Clone** your fork: `git clone https://github.com/YOUR_USERNAME/Hotel-Applicant-Tracker-HOT-.git`
+2. **Clone** your fork: `git clone https://github.com/YOUR_USERNAME/Hotel-Applicant-Tracker-HAT-.git`
 3. **Create** a virtual environment: `python -m venv .venv && .venv\Scripts\activate`
 4. **Install** dependencies: `pip install -r requirements.txt`
 5. **Download** spaCy model: `python -m spacy download en_core_web_sm`
@@ -75,8 +75,8 @@ Use clear, descriptive commit messages:
 ### Local Development
 ```bash
 # Setup development environment
-git clone https://github.com/chris22622/Hotel-Applicant-Tracker-HOT-.git
-cd Hotel-Applicant-Tracker-HOT-
+git clone https://github.com/chris22622/Hotel-Applicant-Tracker-HAT-.git
+cd Hotel-Applicant-Tracker-HAT-
 python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
 python -m spacy download en_core_web_sm

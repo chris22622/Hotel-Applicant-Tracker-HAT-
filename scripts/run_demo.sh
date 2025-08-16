@@ -1,5 +1,5 @@
 #!/bin/bash
-# Quick demo script for Hotel Applicant Tracker (HOT)
+# Quick demo script for Hotel-Applicant-Tracker-HAT-
 
 set -e
 
