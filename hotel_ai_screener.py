@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
 """
-Hotel AI Resume Screener
-One-click intelligent candidate selection with AI recommendations for hotels and resorts
+Hotel AI Resume Screener - Enhanced Version
+One-click intelligent candidate selection with advanced AI recommendations for hotels and resorts
+Version 2.0 - Enhanced accuracy, semantic matching, and bias detection
 """
 
 import shutil
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
-from typing import List, Dict, Any, Tuple
-import re  # Used for email, phone, and experience pattern matching
+from typing import List, Dict, Any, Tuple, Optional
+import re
+import json
+import logging
+from collections import defaultdict
+import statistics
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Verify re module is accessible at module level
 assert re.findall  # Suppress false "unused import" warning

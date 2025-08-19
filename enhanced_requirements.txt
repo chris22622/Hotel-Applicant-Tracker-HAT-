@@ -1,30 +1,39 @@
-# Enhanced Royalton AI Screener Requirements
+# Enhanced Hotel AI Resume Screener Requirements - Version 2.0
 # Install with: pip install -r enhanced_requirements.txt
 
-# Core requirements (already in main requirements)
+# Core requirements for basic functionality
 pandas>=1.5.0
-openpyxl>=3.0.0
-pdfminer.six>=20220524
-python-docx>=0.8.11
+openpyxl>=3.0.10
+pyyaml>=6.0
+streamlit>=1.28.0
 
-# Enhanced OCR capabilities
-pytesseract>=0.3.10
-Pillow>=9.0.0
-pdf2image>=3.1.0
-
-# Semantic matching with spaCy
+# AI and NLP enhancements for better candidate matching
 spacy>=3.4.0
-
-# Configuration management
-PyYAML>=6.0
-
-# Web interface
-streamlit>=1.25.0
-
-# Optional: For better document parsing
-python-magic>=0.4.27
-python-magic-bin>=0.4.14; platform_system=="Windows"
-
-# Optional: For advanced NLP features
-sentence-transformers>=2.2.0
 scikit-learn>=1.1.0
+textblob>=0.17.1
+
+# OCR and document processing for all file types
+pytesseract>=0.3.10
+pdf2image>=3.1.0
+PyPDF2>=3.0.0
+python-docx>=0.8.11
+Pillow>=9.0.0
+pdfminer.six>=20220524
+
+# Data visualization for advanced analytics dashboard
+plotly>=5.0.0
+matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# Web interface enhancements
+streamlit-aggrid>=0.3.0
+
+# Utilities for better processing
+python-dateutil>=2.8.2
+requests>=2.28.0
+tqdm>=4.64.0
+
+# Optional: Advanced ML features (uncomment if needed)
+# transformers>=4.20.0
+# sentence-transformers>=2.2.0
+# torch>=1.12.0

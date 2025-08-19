@@ -1,12 +1,29 @@
 # Hotel AI Resume Screener
 
+🚀 **NEW: Enhanced Version 2.0 Available!** → [See Enhanced Features](README_ENHANCED.md)
+
 Smart, AI-powered resume screening for **hotels and resorts** with **OCR**, **role-aware scoring**, and **instant Excel reports**. Clean `hotel_ai_screener.py` core, CI-ready, and easy for hiring managers to evaluate.
 
 [![CI](https://github.com/chris22622/Hotel-Applicant-Tracker-HAT-/workflows/CI/badge.svg)](https://github.com/chris22622/Hotel-Applicant-Tracker-HAT-/actions)
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
+[![Enhanced Version](https://img.shields.io/badge/Version-2.0%20Available-brightgreen)](README_ENHANCED.md)
 
 > _"Screen honestly. Rank fairly. Hire the best candidates faster."_
+
+## 🎯 Quick Start Options
+
+### 🚀 **Enhanced Version (Recommended)**
+**1-Click Setup & Launch with Advanced AI**
+```bash
+# 1. Double-click Quick_Setup.bat
+# 2. Double-click Quick_Start_Screener.bat
+# 3. Upload resumes & get enhanced results!
+```
+[📖 Full Enhanced Documentation](README_ENHANCED.md)
+
+### 📁 **Original Version**
+**Basic but reliable core functionality**
 
 ![Screenshot](assets/hat-ui.png)
 *(Add a screenshot to `assets/hat-ui.png` and it will render above.)*
