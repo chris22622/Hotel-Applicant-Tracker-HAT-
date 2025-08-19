@@ -209,7 +209,7 @@ def create_candidate_card(candidate, rank):
                     height=300,
                     showlegend=False
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="score_breakdown_chart")
             else:
                 # Fallback to simple bar chart
                 chart_data = pd.DataFrame({
@@ -261,7 +261,7 @@ def create_analytics_dashboard(results):
                 color_discrete_sequence=['#2a5298']
             )
             fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="score_distribution_chart")
         else:
             # Fallback to simple histogram
             st.subheader("Score Distribution")
@@ -289,7 +289,7 @@ def create_analytics_dashboard(results):
                 color_discrete_map=colors
             )
             fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="recommendation_distribution_chart")
         else:
             # Fallback to simple chart
             st.subheader("Recommendation Distribution")
@@ -325,7 +325,7 @@ def create_analytics_dashboard(results):
                 height=500
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="category_heatmap_chart")
         else:
             # Fallback to simple table
             candidates_data = []
