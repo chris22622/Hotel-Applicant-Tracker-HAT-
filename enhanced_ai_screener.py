@@ -5216,136 +5216,374 @@ class EnhancedHotelAIScreener:
         return analysis
     
     def calculate_enhanced_score(self, candidate: Dict[str, Any], position: str) -> Dict[str, Any]:
-        """Calculate comprehensive candidate score with advanced algorithms."""
+        """Calculate intelligent, position-specific candidate score with deep content analysis."""
         position_data = self.position_intelligence.get(position, {})
         if not position_data:
             logger.warning(f"Position '{position}' not found in intelligence database")
             return {"total_score": 0, "breakdown": {}, "recommendation": "Unable to evaluate"}
         
-        # Get scoring weights
-        weights = position_data.get("scoring_weights", {
-            "experience": 0.3, "skills": 0.3, "cultural_fit": 0.2, "hospitality": 0.2
-        })
+        resume_text = candidate.get("resume_text", "").lower()
         
-        scores = {"experience": 0, "skills": 0, "cultural_fit": 0, "hospitality": 0}
-        details = {}
+        # Get position-specific requirements
+        must_have_skills = position_data.get("must_have_skills", [])
+        nice_to_have_skills = position_data.get("nice_to_have_skills", [])
+        technical_skills = position_data.get("technical_skills", [])
+        experience_indicators = position_data.get("experience_indicators", [])
+        education_preferences = position_data.get("education_preferences", [])
+        certifications = position_data.get("certifications", [])
+        disqualifying_factors = position_data.get("disqualifying_factors", [])
+        cultural_fit_keywords = position_data.get("cultural_fit_keywords", [])
         
-        # 1. Experience Score
+        # Initialize detailed scoring
+        scores = {
+            "experience_relevance": 0.0,
+            "skills_match": 0.0,
+            "education_fit": 0.0,
+            "technical_competency": 0.0,
+            "cultural_alignment": 0.0,
+            "position_specific": 0.0,
+            "communication_quality": 0.0,
+            "career_progression": 0.0
+        }
+        
+        breakdown = {}
+        
+        # 1. EXPERIENCE RELEVANCE ANALYSIS (35% weight)
+        experience_score = 0.0
+        relevant_exp_count = 0
         exp_analysis = candidate.get("experience_analysis", {})
-        total_years = exp_analysis.get("total_years", 0)
+        total_experience_years = exp_analysis.get("total_years", 0)
+        
+        # Check for direct position experience with context analysis
+        position_lower = position.lower()
+        for indicator in experience_indicators:
+            indicator_lower = indicator.lower()
+            if indicator_lower in resume_text:
+                # Enhanced context checking
+                context_words = ["experience", "worked", "position", "role", "job", "years", "manager", "supervisor"]
+                context_found = any(word in resume_text[max(0, resume_text.find(indicator_lower)-50):resume_text.find(indicator_lower)+50] 
+                                  for word in context_words)
+                if context_found:
+                    experience_score += 0.25
+                    relevant_exp_count += 1
+                else:
+                    experience_score += 0.1  # Lower score if no context
+        
+        # Position-specific keyword analysis with frequency weighting
+        position_keywords = {
+            # General hospitality
+            "hotel": 0.15, "hospitality": 0.15, "resort": 0.15, "guest": 0.1,
+            "customer service": 0.12, "team": 0.08, "management": 0.1,
+            
+            # Position-specific enhancements
+            position_lower: 0.3,  # Direct position match gets highest score
+        }
+        
+        # Add position-specific keywords
+        if "front desk" in position_lower or "reception" in position_lower:
+            position_keywords.update({"check-in": 0.2, "check-out": 0.2, "reservation": 0.15, "pms": 0.15})
+        elif "housekeeping" in position_lower:
+            position_keywords.update({"cleaning": 0.2, "room": 0.15, "maintenance": 0.1, "laundry": 0.1})
+        elif "server" in position_lower or "waiter" in position_lower:
+            position_keywords.update({"restaurant": 0.2, "food service": 0.2, "menu": 0.1, "dining": 0.15})
+        elif "chef" in position_lower or "cook" in position_lower:
+            position_keywords.update({"kitchen": 0.2, "cooking": 0.2, "culinary": 0.2, "food prep": 0.15})
+        elif "manager" in position_lower:
+            position_keywords.update({"leadership": 0.2, "supervision": 0.15, "budget": 0.1, "operations": 0.15})
+        
+        for keyword, base_weight in position_keywords.items():
+            if keyword in resume_text:
+                # Count frequency and context for better scoring
+                frequency = resume_text.count(keyword)
+                # Bonus for multiple mentions (up to 3x)
+                frequency_multiplier = min(1 + (frequency - 1) * 0.3, 2.0)
+                experience_score += base_weight * frequency_multiplier
+        
+        # Experience years analysis with position requirements
         min_years = position_data.get("min_experience_years", 0)
         preferred_years = position_data.get("preferred_experience_years", 3)
         
-        if total_years >= preferred_years:
-            scores["experience"] = 1.0
-        elif total_years >= min_years:
-            scores["experience"] = 0.5 + (total_years - min_years) / (preferred_years - min_years) * 0.5
+        if total_experience_years >= preferred_years:
+            experience_score += 0.2
+        elif total_experience_years >= min_years:
+            experience_score += 0.15
+        elif total_experience_years > 0:
+            experience_score += 0.1
+        
+        # Leadership and progression indicators
+        leadership_terms = ["manager", "supervisor", "lead", "coordinator", "head", "chief", "director"]
+        progression_terms = ["promoted", "advanced", "grew", "developed", "improved", "increased"]
+        
+        leadership_found = sum(1 for term in leadership_terms if term in resume_text)
+        progression_found = sum(1 for term in progression_terms if term in resume_text)
+        
+        if leadership_found > 0:
+            experience_score += 0.1 * min(leadership_found, 3)
+        if progression_found > 0:
+            experience_score += 0.05 * min(progression_found, 2)
+        
+        scores["experience_relevance"] = min(experience_score, 1.0)
+        breakdown["experience"] = {
+            "score": scores["experience_relevance"],
+            "relevant_positions": relevant_exp_count,
+            "total_years": total_experience_years,
+            "meets_minimum": total_experience_years >= min_years,
+            "leadership_indicators": leadership_found,
+            "progression_indicators": progression_found
+        }
+        
+        # 2. SKILLS MATCH ANALYSIS (30% weight)
+        skills_score = 0.0
+        must_have_found = 0
+        nice_to_have_found = 0
+        technical_found = 0
+        
+        # Must-have skills with context verification
+        for skill in must_have_skills:
+            skill_lower = skill.lower()
+            if skill_lower in resume_text:
+                # Check for skill context
+                skill_pos = resume_text.find(skill_lower)
+                context = resume_text[max(0, skill_pos-30):skill_pos+len(skill_lower)+30]
+                
+                # Higher score if skill is mentioned with experience context
+                if any(word in context for word in ["experience", "skilled", "proficient", "expert", "years"]):
+                    skills_score += 0.12
+                else:
+                    skills_score += 0.08
+                must_have_found += 1
+        
+        # Nice-to-have skills
+        for skill in nice_to_have_skills:
+            if skill.lower() in resume_text:
+                skills_score += 0.06
+                nice_to_have_found += 1
+        
+        # Technical skills with proficiency checking
+        for skill in technical_skills:
+            skill_lower = skill.lower()
+            if skill_lower in resume_text:
+                skill_pos = resume_text.find(skill_lower)
+                context = resume_text[max(0, skill_pos-40):skill_pos+len(skill_lower)+40]
+                
+                # Higher score for proficiency indicators
+                if any(word in context for word in ["advanced", "expert", "proficient", "certified", "experienced"]):
+                    skills_score += 0.1
+                else:
+                    skills_score += 0.06
+                technical_found += 1
+        
+        # Bonus for comprehensive skill coverage
+        total_skills_available = len(must_have_skills) + len(nice_to_have_skills) + len(technical_skills)
+        total_skills_found = must_have_found + nice_to_have_found + technical_found
+        
+        if total_skills_available > 0:
+            coverage_ratio = total_skills_found / total_skills_available
+            if coverage_ratio > 0.7:
+                skills_score += 0.15  # Bonus for high coverage
+            elif coverage_ratio > 0.5:
+                skills_score += 0.1
+        
+        scores["skills_match"] = min(skills_score, 1.0)
+        breakdown["skills"] = {
+            "score": scores["skills_match"],
+            "must_have_found": must_have_found,
+            "must_have_total": len(must_have_skills),
+            "nice_to_have_found": nice_to_have_found,
+            "technical_found": technical_found,
+            "coverage_ratio": total_skills_found / max(total_skills_available, 1)
+        }
+        
+        # 3. EDUCATION & CERTIFICATION ANALYSIS (15% weight)
+        education_score = 0.0
+        
+        # General education indicators
+        education_terms = ["degree", "bachelor", "master", "diploma", "certificate", "graduate", "university", "college", "education"]
+        education_found = sum(1 for term in education_terms if term in resume_text)
+        
+        if education_found > 0:
+            education_score += 0.3
+            
+            # Check for relevant education
+            for pref in education_preferences:
+                if pref.lower() in resume_text:
+                    education_score += 0.4
+                    break
+        
+        # Check for certifications
+        certification_found = 0
+        for cert in certifications:
+            if cert.lower() in resume_text:
+                education_score += 0.2
+                certification_found += 1
+        
+        # Professional development indicators
+        development_terms = ["training", "course", "certification", "workshop", "seminar", "license"]
+        development_found = sum(1 for term in development_terms if term in resume_text)
+        if development_found > 0:
+            education_score += 0.1 * min(development_found, 2)
+        
+        scores["education_fit"] = min(education_score, 1.0)
+        breakdown["education"] = {
+            "score": scores["education_fit"],
+            "has_education": education_found > 0,
+            "relevant_field": any(pref.lower() in resume_text for pref in education_preferences),
+            "certifications_found": certification_found,
+            "professional_development": development_found
+        }
+        
+        # 4. CULTURAL ALIGNMENT & SOFT SKILLS (10% weight)
+        cultural_score = 0.0
+        
+        # Cultural fit keywords with context
+        cultural_matches = 0
+        for keyword in cultural_fit_keywords:
+            keyword_lower = keyword.lower()
+            if keyword_lower in resume_text:
+                # Check if used in positive context
+                keyword_pos = resume_text.find(keyword_lower)
+                context = resume_text[max(0, keyword_pos-20):keyword_pos+len(keyword_lower)+20]
+                
+                # Boost if in positive context
+                positive_context = any(word in context for word in ["excellent", "strong", "proven", "demonstrated"])
+                if positive_context:
+                    cultural_score += 0.2
+                else:
+                    cultural_score += 0.15
+                cultural_matches += 1
+        
+        # Hospitality mindset indicators
+        hospitality_mindset = ["guest satisfaction", "customer satisfaction", "service excellence", "team player", 
+                              "positive attitude", "professional", "reliable", "dedicated", "passionate"]
+        mindset_found = sum(1 for term in hospitality_mindset if term in resume_text)
+        if mindset_found > 0:
+            cultural_score += 0.1 * min(mindset_found, 3)
+        
+        scores["cultural_alignment"] = min(cultural_score, 1.0)
+        breakdown["cultural"] = {
+            "score": scores["cultural_alignment"],
+            "keywords_found": cultural_matches,
+            "hospitality_mindset": mindset_found
+        }
+        
+        # 5. COMMUNICATION & PROFESSIONALISM (5% weight)
+        comm_score = 0.0
+        
+        # Resume quality indicators
+        if len(resume_text) > 300:  # Reasonable detail
+            comm_score += 0.3
+        
+        # Professional language and achievements
+        professional_terms = ["responsible for", "achieved", "managed", "developed", "implemented", "improved", 
+                             "coordinated", "supervised", "led", "organized", "maintained"]
+        professional_found = sum(1 for term in professional_terms if term in resume_text)
+        comm_score += min(professional_found * 0.05, 0.4)
+        
+        # Language skills (bonus for hospitality)
+        language_terms = ["bilingual", "multilingual", "spanish", "french", "languages", "fluent"]
+        if any(term in resume_text for term in language_terms):
+            comm_score += 0.3
+        
+        scores["communication_quality"] = min(comm_score, 1.0)
+        breakdown["communication"] = {
+            "score": scores["communication_quality"],
+            "resume_length": len(resume_text),
+            "professional_terms": professional_found,
+            "multilingual": any(term in resume_text for term in language_terms)
+        }
+        
+        # 6. POSITION-SPECIFIC INTELLIGENCE (5% weight)
+        position_score = 0.0
+        
+        # Direct position title matching with variations
+        position_variations = [position.lower()]
+        if " " in position.lower():
+            position_variations.extend(position.lower().split())
+        
+        for variation in position_variations:
+            if variation in resume_text:
+                position_score += 0.4
+        
+        # Industry-specific terminology
+        if "front desk" in position.lower():
+            industry_terms = ["check-in", "check-out", "pms", "folio", "reservation", "concierge"]
+        elif "housekeeping" in position.lower():
+            industry_terms = ["room status", "amenities", "turnover", "inventory", "cleaning protocols"]
+        elif "food" in position.lower() or "restaurant" in position.lower():
+            industry_terms = ["pos system", "menu knowledge", "food safety", "allergies", "wine pairing"]
         else:
-            scores["experience"] = total_years / max(min_years, 1) * 0.5
+            industry_terms = ["hospitality", "guest services", "customer satisfaction"]
         
-        # Boost for direct experience
-        if exp_analysis.get("has_direct_experience", False):
-            scores["experience"] = min(scores["experience"] * 1.3, 1.0)
+        industry_found = sum(1 for term in industry_terms if term in resume_text)
+        position_score += min(industry_found * 0.1, 0.4)
         
-        # Leadership boost
-        if exp_analysis.get("leadership_experience", False):
-            scores["experience"] = min(scores["experience"] * 1.2, 1.0)
-        
-        details["experience"] = {
-            "years": total_years,
-            "quality": exp_analysis.get("experience_quality", "Unknown"),
-            "direct_experience": exp_analysis.get("has_direct_experience", False),
-            "leadership": exp_analysis.get("leadership_experience", False)
+        scores["position_specific"] = min(position_score, 1.0)
+        breakdown["position_specific"] = {
+            "score": scores["position_specific"],
+            "direct_match": any(var in resume_text for var in position_variations),
+            "industry_terms": industry_found
         }
         
-        # 2. Skills Score
-        skill_analysis = candidate.get("skill_analysis", {})
-        skills_found = skill_analysis.get("skills", [])
-        confidence_scores = skill_analysis.get("confidence_scores", {})
+        # CHECK FOR DISQUALIFYING FACTORS
+        disqualification_penalty = 0.0
+        disqualified_reasons = []
         
-        must_have = position_data.get("must_have_skills", [])
-        nice_to_have = position_data.get("nice_to_have_skills", [])
-        technical_skills = position_data.get("technical_skills", [])
+        for factor in disqualifying_factors:
+            if factor.lower() in resume_text:
+                disqualification_penalty += 0.3
+                disqualified_reasons.append(factor)
         
-        # Calculate skills score
-        must_have_score = 0
-        if must_have:
-            matched_must_have = [s for s in skills_found if s in must_have]
-            must_have_score = len(matched_must_have) / len(must_have)
-        
-        nice_to_have_score = 0
-        if nice_to_have:
-            matched_nice_to_have = [s for s in skills_found if s in nice_to_have]
-            nice_to_have_score = len(matched_nice_to_have) / len(nice_to_have)
-        
-        technical_score = 0
-        if technical_skills:
-            matched_technical = [s for s in skills_found if s in technical_skills]
-            technical_score = len(matched_technical) / len(technical_skills)
-        
-        # Weighted skills score
-        scores["skills"] = (must_have_score * 0.6 + nice_to_have_score * 0.3 + technical_score * 0.1)
-        
-        details["skills"] = {
-            "must_have_matched": must_have_score,
-            "nice_to_have_matched": nice_to_have_score,
-            "technical_matched": technical_score,
-            "total_skills": len(skills_found)
+        # CALCULATE FINAL WEIGHTED SCORE
+        weights = {
+            "experience_relevance": 0.35,
+            "skills_match": 0.30,
+            "education_fit": 0.15,
+            "cultural_alignment": 0.10,
+            "communication_quality": 0.05,
+            "position_specific": 0.05
         }
         
-        # 3. Cultural Fit Score
-        cultural_keywords = position_data.get("cultural_fit_keywords", [])
-        disqualifying_factors = position_data.get("disqualifying_factors", [])
+        total_score = sum(scores[key] * weights[key] for key in weights.keys())
+        total_score = max(0.0, total_score - disqualification_penalty)
         
-        candidate_text = candidate.get("resume_text", "").lower()
-        
-        cultural_matches = sum(1 for keyword in cultural_keywords if keyword.lower() in candidate_text)
-        cultural_score = cultural_matches / max(len(cultural_keywords), 1)
-        
-        # Check for disqualifying factors
-        disqualifying_found = [factor for factor in disqualifying_factors if factor.lower() in candidate_text]
-        if disqualifying_found:
-            cultural_score *= 0.5  # Penalty for disqualifying factors
-        
-        scores["cultural_fit"] = min(cultural_score, 1.0)
-        
-        details["cultural_fit"] = {
-            "positive_indicators": cultural_matches,
-            "disqualifying_factors": disqualifying_found
-        }
-        
-        # 4. Hospitality Industry Score
-        hospitality_indicators = [
-            "hotel", "hospitality", "resort", "restaurant", "food service",
-            "guest services", "tourism", "travel", "accommodation"
-        ]
-        
-        hospitality_matches = sum(1 for indicator in hospitality_indicators if indicator in candidate_text)
-        scores["hospitality"] = min(hospitality_matches / 3, 1.0)  # Max at 3 indicators
-        
-        details["hospitality"] = {
-            "industry_indicators": hospitality_matches
-        }
-        
-        # Calculate final score
-        final_score = sum(scores[category] * weights[category] for category in scores)
-        
-        # Determine recommendation
-        if final_score >= 0.8:
-            recommendation = "Highly Recommended"
-        elif final_score >= 0.65:
-            recommendation = "Recommended"
-        elif final_score >= 0.5:
-            recommendation = "Consider with Interview"
+        # INTELLIGENT RECOMMENDATIONS
+        if total_score >= 0.85:
+            recommendation = "EXCEPTIONAL CANDIDATE"
+            recommendation_reason = "Outstanding match across all criteria"
+        elif total_score >= 0.70:
+            recommendation = "HIGHLY RECOMMENDED"
+            recommendation_reason = "Excellent fit with strong qualifications"
+        elif total_score >= 0.55:
+            recommendation = "RECOMMENDED"
+            recommendation_reason = "Good candidate with solid experience"
+        elif total_score >= 0.40:
+            recommendation = "CONSIDER WITH INTERVIEW"
+            recommendation_reason = "Potential candidate, interview to assess fit"
+        elif total_score >= 0.25:
+            recommendation = "MARGINAL CANDIDATE"
+            recommendation_reason = "Significant gaps, consider only if limited options"
         else:
-            recommendation = "Not Recommended"
+            recommendation = "NOT RECOMMENDED"
+            recommendation_reason = "Poor fit for this position"
+        
+        # Enhanced category scores for backward compatibility
+        category_scores = {
+            "experience": scores["experience_relevance"],
+            "skills": scores["skills_match"],
+            "cultural_fit": scores["cultural_alignment"],
+            "hospitality": (scores["experience_relevance"] + scores["cultural_alignment"]) / 2
+        }
         
         return {
-            "total_score": final_score,
-            "category_scores": scores,
-            "breakdown": details,
+            "total_score": total_score,
             "recommendation": recommendation,
-            "position": position
+            "recommendation_reason": recommendation_reason,
+            "category_scores": category_scores,
+            "detailed_scores": scores,
+            "breakdown": breakdown,
+            "disqualified_reasons": disqualified_reasons,
+            "position": position,
+            "scoring_methodology": "Enhanced AI Analysis v3.0 - Deep Content Analysis"
         }
     
     def process_single_resume(self, file_path: Path, position: str) -> Dict[str, Any]:
