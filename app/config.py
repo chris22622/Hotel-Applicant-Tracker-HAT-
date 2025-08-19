@@ -1,6 +1,6 @@
 """Application configuration."""
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, List
 
 from pydantic_settings import BaseSettings
 
@@ -8,16 +8,23 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings."""
     
+    # Environment
+    ENV: str = "development"
+    
     # Security
     SECRET_KEY: str = "change-me-to-a-secure-random-key"
     JWT_EXPIRE_MIN: int = 1440
     
-    # Database - SQLite instead of PostgreSQL
+    # Database
+    DATABASE_URL: str = "sqlite:///./data/hat.db"
     DB_DSN: str = "sqlite+aiosqlite:///./hr_ats.db"
     
     # Local file storage instead of MinIO/S3
     UPLOAD_DIR: str = "./uploads"
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB
+    
+    # CORS
+    CORS_ALLOW_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
     
     # Email
     SMTP_HOST: Optional[str] = None

@@ -170,7 +170,7 @@ def create_candidate_card(candidate, rank):
         icon = "❌"
     
     # Create expandable candidate card
-    with st.expander(f"{icon} #{rank} {candidate.get('candidate_name', 'Unknown')} - {score:.1%} ({recommendation})"):
+    with st.expander(f"{icon} #{rank} {candidate.get('candidate_name', 'Unknown')} - {score*100:.1f} percent ({recommendation})"):
         col1, col2 = st.columns(2)
         
         with col1:
@@ -205,7 +205,7 @@ def create_candidate_card(candidate, rank):
                 fig.update_layout(
                     title="Score Breakdown",
                     xaxis_title="Category",
-                    yaxis_title="Score (%)",
+                    yaxis_title="Score (Percentage)",
                     height=300,
                     showlegend=False
                 )
@@ -214,7 +214,7 @@ def create_candidate_card(candidate, rank):
                 # Fallback to simple bar chart
                 chart_data = pd.DataFrame({
                     'Category': list(scores_data.keys()),
-                    'Score (%)': [scores_data[key] * 100 for key in scores_data.keys()]
+                    'Score (Percentage)': [scores_data[key] * 100 for key in scores_data.keys()]
                 })
                 st.bar_chart(chart_data.set_index('Category'))
 
@@ -237,7 +237,7 @@ def create_analytics_dashboard(results):
         st.metric("Total Candidates", total_candidates)
     
     with col2:
-        st.metric("Average Score", f"{avg_score:.1%}")
+        st.metric("Average Score", f"{avg_score*100:.1f}%")
     
     with col3:
         st.metric("Highly Recommended", highly_recommended)
@@ -257,7 +257,7 @@ def create_analytics_dashboard(results):
                 x=scores,
                 nbins=10,
                 title="Score Distribution",
-                labels={'x': 'Score (%)', 'y': 'Number of Candidates'},
+                labels={'x': 'Score (Percentage)', 'y': 'Number of Candidates'},
                 color_discrete_sequence=['#2a5298']
             )
             fig.update_layout(height=400)
@@ -314,9 +314,8 @@ def create_analytics_dashboard(results):
                 x=categories,
                 y=candidates,
                 colorscale='RdYlBu_r',
-                text=[[f"{val:.1f}%" for val in row] for row in heatmap_data],
-                texttemplate="%{text}",
                 textfont={"size": 10},
+                showscale=True
             ))
             
             fig.update_layout(
@@ -334,7 +333,7 @@ def create_analytics_dashboard(results):
                 row = {'Rank': i, 'Candidate': candidate.get('candidate_name', f"Candidate {i}")}
                 if 'category_scores' in candidate:
                     for category, score in candidate['category_scores'].items():
-                        row[f"{category.title()} %"] = f"{score * 100:.1f}%"
+                        row[f"{category.title()} Score"] = f"{score * 100:.1f}"
                 candidates_data.append(row)
             
             df_categories = pd.DataFrame(candidates_data)
@@ -354,7 +353,7 @@ def export_results_to_excel(results, position):
             'Email': candidate.get('email', 'Not found'),
             'Phone': candidate.get('phone', 'Not found'),
             'Location': candidate.get('location', 'Not specified'),
-            'Total Score': f"{candidate.get('total_score', 0):.1%}",
+            'Total Score': f"{candidate.get('total_score', 0)*100:.1f}%",
             'Recommendation': candidate.get('recommendation', 'Unknown'),
             'Experience Years': candidate.get('experience_years', 0),
             'Experience Quality': candidate.get('experience_quality', 'Unknown'),
@@ -375,7 +374,7 @@ def export_results_to_excel(results, position):
             category_data = []
             for candidate in results:
                 row = {'Name': candidate.get('candidate_name', 'Unknown')}
-                row.update({f"{k.title()} Score": f"{v:.1%}" for k, v in candidate.get('category_scores', {}).items()})
+                row.update({f"{k.title()} Score": f"{v*100:.1f} percent" for k, v in candidate.get('category_scores', {}).items()})
                 category_data.append(row)
             
             df_categories = pd.DataFrame(category_data)
@@ -424,7 +423,6 @@ def main():
             max_value=1.0,
             value=0.3,
             step=0.05,
-            format="%.0%",
             help="Only show candidates above this score"
         )
         
@@ -539,7 +537,7 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 Top Candidates:
 """
                     for i, candidate in enumerate(results[:10], 1):
-                        report += f"\n{i}. {candidate.get('candidate_name', 'Unknown')} - {candidate.get('total_score', 0):.1%}"
+                        report += f"\n{i}. {candidate.get('candidate_name', 'Unknown')} - {candidate.get('total_score', 0)*100:.1f} percent"
                         report += f"\n   Email: {candidate.get('email', 'Not found')}"
                         report += f"\n   Phone: {candidate.get('phone', 'Not found')}"
                         report += f"\n   Recommendation: {candidate.get('recommendation', 'Unknown')}\n"

@@ -31,10 +31,16 @@ if errorlevel 1 (
 echo 🌐 Launching web interface...
 echo.
 echo ✨ The Hotel AI Resume Screener will open in your web browser
-echo 📱 If it doesn't open automatically, go to: http://localhost:8501
+echo 📱 If it doesn't open automatically, go to: http://localhost:8502
 echo 🛑 Press Ctrl+C in this window to stop the application
 echo.
 
-streamlit run enhanced_streamlit_app.py --server.port 8501 --server.headless false
+:: Kill any existing Streamlit processes to avoid port conflicts
+taskkill /f /im streamlit.exe >nul 2>&1
 
+:: Start with a different port to avoid conflicts
+streamlit run enhanced_streamlit_app.py --server.port 8502 --server.headless false --server.address localhost
+
+echo.
+echo 🎯 Application stopped. You can close this window or run again.
 pause

@@ -1,20 +1,38 @@
 @echo off
-echo ===============================================
-echo   ROYALTON RESORT AI SCREENER - WEB INTERFACE
-echo   Enhanced with OCR and Semantic Matching
-echo ===============================================
+title Hotel AI Resume Screener - Web App
+echo ===========================================
+echo   Hotel AI Resume Screener - Web App
+echo ===========================================
 echo.
 
-echo Starting Streamlit web interface...
-echo Open your browser to: http://localhost:8501
+:: Check virtual environment
+if not exist ".venv" (
+    echo ⚠️  Setting up virtual environment...
+    python -m venv .venv
+    if errorlevel 1 (
+        echo ❌ Failed to create virtual environment. Make sure Python is installed.
+        pause
+        exit /b 1
+    )
+)
+
+:: Activate virtual environment
+echo 🔄 Activating virtual environment...
+call .venv\Scripts\activate.bat
+
+:: Install required packages
+echo 📦 Installing required packages...
+pip install fastapi uvicorn sqlalchemy pydantic-settings --quiet --disable-pip-version-check
+
+:: Create data directory
+if not exist "data" mkdir data
+
+echo.
+echo 🚀 Starting the web server...
+echo 🌐 Go to: http://localhost:8000
 echo.
 
-echo To install enhanced features first time:
-echo pip install -r enhanced_requirements.txt
-echo python -m spacy download en_core_web_sm
-echo.
-
-cd /d "%~dp0"
-streamlit run streamlit_gui.py
+:: Start the application directly
+python start_web_app.py
 
 pause
