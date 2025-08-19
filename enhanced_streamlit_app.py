@@ -6,9 +6,6 @@ Advanced web application with improved UI, real-time processing, and comprehensi
 
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import tempfile
 import os
 import json
@@ -16,6 +13,24 @@ from pathlib import Path
 from datetime import datetime
 import base64
 from io import BytesIO
+
+# Try to import plotting libraries with fallbacks
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    plotly_available = True
+    st.success("✅ Advanced charting available")
+except ImportError:
+    plotly_available = False
+    st.warning("⚠️ Plotly not installed - using basic charts. Run Quick_Setup.bat to get advanced charts.")
+
+try:
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    matplotlib_available = True
+except ImportError:
+    matplotlib_available = False
 
 # Try to import the enhanced screener
 try:
@@ -178,21 +193,30 @@ def create_candidate_card(candidate, rank):
         # Score breakdown chart
         if 'category_scores' in candidate:
             scores_data = candidate['category_scores']
-            fig = go.Figure(data=[
-                go.Bar(
-                    x=list(scores_data.keys()),
-                    y=[scores_data[key] * 100 for key in scores_data.keys()],
-                    marker_color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+            
+            if plotly_available:
+                fig = go.Figure(data=[
+                    go.Bar(
+                        x=list(scores_data.keys()),
+                        y=[scores_data[key] * 100 for key in scores_data.keys()],
+                        marker_color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+                    )
+                ])
+                fig.update_layout(
+                    title="Score Breakdown",
+                    xaxis_title="Category",
+                    yaxis_title="Score (%)",
+                    height=300,
+                    showlegend=False
                 )
-            ])
-            fig.update_layout(
-                title="Score Breakdown",
-                xaxis_title="Category",
-                yaxis_title="Score (%)",
-                height=300,
-                showlegend=False
-            )
-            st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                # Fallback to simple bar chart
+                chart_data = pd.DataFrame({
+                    'Category': list(scores_data.keys()),
+                    'Score (%)': [scores_data[key] * 100 for key in scores_data.keys()]
+                })
+                st.bar_chart(chart_data.set_index('Category'))
 
 def create_analytics_dashboard(results):
     """Create comprehensive analytics dashboard."""
@@ -227,69 +251,94 @@ def create_analytics_dashboard(results):
     with col1:
         # Score distribution
         scores = [r['total_score'] * 100 for r in results]
-        fig = px.histogram(
-            x=scores,
-            nbins=10,
-            title="Score Distribution",
-            labels={'x': 'Score (%)', 'y': 'Number of Candidates'},
-            color_discrete_sequence=['#2a5298']
-        )
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        
+        if plotly_available:
+            fig = px.histogram(
+                x=scores,
+                nbins=10,
+                title="Score Distribution",
+                labels={'x': 'Score (%)', 'y': 'Number of Candidates'},
+                color_discrete_sequence=['#2a5298']
+            )
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            # Fallback to simple histogram
+            st.subheader("Score Distribution")
+            chart_data = pd.DataFrame({'Scores': scores})
+            st.bar_chart(chart_data)
     
     with col2:
         # Recommendation breakdown
         recommendations = [r.get('recommendation', 'Unknown') for r in results]
         rec_counts = pd.Series(recommendations).value_counts()
         
-        colors = {
-            'Highly Recommended': '#007bff',
-            'Recommended': '#28a745',
-            'Consider with Interview': '#ffc107',
-            'Not Recommended': '#dc3545'
-        }
-        
-        fig = px.pie(
-            values=rec_counts.values,
-            names=rec_counts.index,
-            title="Recommendation Distribution",
-            color=rec_counts.index,
-            color_discrete_map=colors
-        )
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        if plotly_available:
+            colors = {
+                'Highly Recommended': '#007bff',
+                'Recommended': '#28a745',
+                'Consider with Interview': '#ffc107',
+                'Not Recommended': '#dc3545'
+            }
+            
+            fig = px.pie(
+                values=rec_counts.values,
+                names=rec_counts.index,
+                title="Recommendation Distribution",
+                color=rec_counts.index,
+                color_discrete_map=colors
+            )
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            # Fallback to simple chart
+            st.subheader("Recommendation Distribution")
+            st.bar_chart(rec_counts)
     
     # Category scores heatmap
     if results and 'category_scores' in results[0]:
         st.subheader("📈 Category Performance Analysis")
         
-        # Prepare data for heatmap
-        candidates = [r.get('candidate_name', f"Candidate {i+1}") for i, r in enumerate(results[:10])]
-        categories = list(results[0]['category_scores'].keys())
-        
-        heatmap_data = []
-        for candidate in results[:10]:
-            row = [candidate['category_scores'][cat] * 100 for cat in categories]
-            heatmap_data.append(row)
-        
-        fig = go.Figure(data=go.Heatmap(
-            z=heatmap_data,
-            x=categories,
-            y=candidates,
-            colorscale='RdYlBu_r',
-            text=[[f"{val:.1f}%" for val in row] for row in heatmap_data],
-            texttemplate="%{text}",
-            textfont={"size": 10},
-        ))
-        
-        fig.update_layout(
-            title="Top 10 Candidates - Category Scores Heatmap",
-            xaxis_title="Score Categories",
-            yaxis_title="Candidates",
-            height=500
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+        if plotly_available:
+            # Prepare data for heatmap
+            candidates = [r.get('candidate_name', f"Candidate {i+1}") for i, r in enumerate(results[:10])]
+            categories = list(results[0]['category_scores'].keys())
+            
+            heatmap_data = []
+            for candidate in results[:10]:
+                row = [candidate['category_scores'][cat] * 100 for cat in categories]
+                heatmap_data.append(row)
+            
+            fig = go.Figure(data=go.Heatmap(
+                z=heatmap_data,
+                x=categories,
+                y=candidates,
+                colorscale='RdYlBu_r',
+                text=[[f"{val:.1f}%" for val in row] for row in heatmap_data],
+                texttemplate="%{text}",
+                textfont={"size": 10},
+            ))
+            
+            fig.update_layout(
+                title="Top 10 Candidates - Category Scores Heatmap",
+                xaxis_title="Score Categories",
+                yaxis_title="Candidates",
+                height=500
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            # Fallback to simple table
+            candidates_data = []
+            for i, candidate in enumerate(results[:10], 1):
+                row = {'Rank': i, 'Candidate': candidate.get('candidate_name', f"Candidate {i}")}
+                if 'category_scores' in candidate:
+                    for category, score in candidate['category_scores'].items():
+                        row[f"{category.title()} %"] = f"{score * 100:.1f}%"
+                candidates_data.append(row)
+            
+            df_categories = pd.DataFrame(candidates_data)
+            st.dataframe(df_categories, use_container_width=True)
 
 def export_results_to_excel(results, position):
     """Export results to Excel and provide download link."""

@@ -45,11 +45,11 @@ python -m pip install --upgrade pip --quiet
 
 :: Install core requirements
 echo 📦 Installing core requirements...
-python -m pip install pandas openpyxl pyyaml streamlit --quiet
+python -m pip install pandas openpyxl pyyaml streamlit plotly matplotlib seaborn --quiet
 
 :: Install enhanced AI packages (optional)
 echo 📦 Installing AI enhancement packages...
-python -m pip install spacy scikit-learn --quiet
+python -m pip install spacy scikit-learn textblob --quiet
 if not errorlevel 1 (
     echo 📦 Downloading spaCy language model...
     python -m spacy download en_core_web_sm --quiet
