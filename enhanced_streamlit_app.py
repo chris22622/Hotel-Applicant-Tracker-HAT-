@@ -209,7 +209,7 @@ def create_candidate_card(candidate, rank):
                     height=300,
                     showlegend=False
                 )
-                st.plotly_chart(fig, use_container_width=True, key="score_breakdown_chart")
+                st.plotly_chart(fig, use_container_width=True, key=f"score_breakdown_chart_{rank}")
             else:
                 # Fallback to simple bar chart
                 chart_data = pd.DataFrame({
