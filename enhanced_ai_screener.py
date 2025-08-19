@@ -5614,6 +5614,9 @@ class EnhancedHotelAIScreener:
                 **candidate_info
             }
             
+            # Detect gender
+            gender_info = self._detect_gender(text, candidate_info.get("name", "Unknown"))
+            
             scoring_result = self.calculate_enhanced_score(candidate_data, position)
             
             # Compile final result
@@ -5623,6 +5626,9 @@ class EnhancedHotelAIScreener:
                 "email": candidate_info.get("email", "Not found"),
                 "phone": candidate_info.get("phone", "Not found"),
                 "location": candidate_info.get("location", "Not specified"),
+                "gender": gender_info["gender"],
+                "gender_confidence": gender_info["confidence"],
+                "gender_indicators": gender_info["indicators"],
                 "total_score": scoring_result["total_score"],
                 "recommendation": scoring_result["recommendation"],
                 "category_scores": scoring_result["category_scores"],
@@ -5753,6 +5759,151 @@ class EnhancedHotelAIScreener:
                 break
         
         return info
+    
+    def _detect_gender(self, text: str, name: str) -> Dict[str, Any]:
+        """Intelligently detect candidate gender from resume content."""
+        gender_info = {
+            "gender": "Unknown",
+            "confidence": 0.0,
+            "indicators": []
+        }
+        
+        text_lower = text.lower()
+        name_lower = name.lower()
+        
+        # Common male names (more comprehensive list)
+        male_names = {
+            'john', 'james', 'robert', 'michael', 'william', 'david', 'richard', 'joseph', 'thomas', 'christopher',
+            'charles', 'daniel', 'matthew', 'anthony', 'mark', 'donald', 'steven', 'paul', 'andrew', 'joshua',
+            'kenneth', 'kevin', 'brian', 'george', 'timothy', 'ronald', 'jason', 'edward', 'jeffrey', 'ryan',
+            'jacob', 'gary', 'nicholas', 'eric', 'jonathan', 'stephen', 'larry', 'justin', 'scott', 'brandon',
+            'benjamin', 'samuel', 'gregory', 'alexander', 'patrick', 'frank', 'raymond', 'jack', 'dennis', 'jerry',
+            'alex', 'jose', 'henry', 'douglas', 'peter', 'zachary', 'noah', 'carl', 'arthur', 'gerald',
+            'wayne', 'harold', 'ralph', 'louis', 'philip', 'bobby', 'russell', 'craig', 'alan', 'sean',
+            'juan', 'luis', 'carlos', 'miguel', 'antonio', 'angel', 'francisco', 'victor', 'jesus', 'salvador',
+            'adam', 'nathan', 'aaron', 'kyle', 'jose', 'manuel', 'edgar', 'fernando', 'mario', 'ricardo'
+        }
+        
+        # Common female names (more comprehensive list)
+        female_names = {
+            'mary', 'patricia', 'jennifer', 'linda', 'elizabeth', 'barbara', 'susan', 'jessica', 'sarah', 'karen',
+            'nancy', 'lisa', 'betty', 'helen', 'sandra', 'donna', 'carol', 'ruth', 'sharon', 'michelle',
+            'laura', 'sarah', 'kimberly', 'deborah', 'dorothy', 'lisa', 'nancy', 'karen', 'betty', 'helen',
+            'sandra', 'donna', 'carol', 'ruth', 'sharon', 'michelle', 'laura', 'emily', 'kimberly', 'deborah',
+            'dorothy', 'amy', 'angela', 'ashley', 'brenda', 'emma', 'olivia', 'cynthia', 'marie', 'janet',
+            'catherine', 'frances', 'christine', 'virginia', 'samantha', 'debra', 'rachel', 'carolyn', 'janet',
+            'virginia', 'maria', 'heather', 'diane', 'julie', 'joyce', 'victoria', 'kelly', 'christina', 'joan',
+            'evelyn', 'lauren', 'judith', 'megan', 'cheryl', 'andrea', 'hannah', 'jacqueline', 'martha', 'gloria',
+            'teresa', 'sara', 'janice', 'marie', 'julia', 'kathryn', 'anna', 'rose', 'grace', 'sophia',
+            'isabella', 'ava', 'mia', 'charlotte', 'abigail', 'ella', 'madison', 'scarlett', 'victoria', 'aria'
+        }
+        
+        # Gender-specific pronouns and references
+        male_pronouns = ['he', 'him', 'his', 'himself', 'mr', 'mr.', 'mister']
+        female_pronouns = ['she', 'her', 'hers', 'herself', 'ms', 'ms.', 'mrs', 'mrs.', 'miss', 'missus']
+        
+        # Professional titles that can indicate gender
+        male_titles = ['mr', 'mister', 'sir', 'king', 'lord', 'duke', 'prince', 'baron', 'gentleman']
+        female_titles = ['ms', 'mrs', 'miss', 'madam', 'lady', 'queen', 'duchess', 'princess', 'baroness']
+        
+        # Military/professional gender indicators
+        male_military = ['seaman', 'airman', 'fireman', 'policeman', 'businessman', 'salesman', 'chairman']
+        female_military = ['seawoman', 'airwoman', 'firewoman', 'policewoman', 'businesswoman', 'saleswoman', 'chairwoman']
+        
+        # Sports and activities with gender tendencies (careful with stereotypes)
+        male_sports = ['football', 'rugby', 'wrestling', 'boxing', 'ice hockey', 'baseball']
+        female_sports = ['softball', 'field hockey', 'synchronized swimming', 'rhythmic gymnastics']
+        
+        confidence_score = 0.0
+        indicators = []
+        
+        # Check first name
+        first_name = name_lower.split()[0] if name_lower.split() else ""
+        if first_name in male_names:
+            confidence_score += 0.7
+            indicators.append(f"Male name: {first_name}")
+            gender_info["gender"] = "Male"
+        elif first_name in female_names:
+            confidence_score += 0.7
+            indicators.append(f"Female name: {first_name}")
+            gender_info["gender"] = "Female"
+        
+        # Check pronouns in text
+        male_pronoun_count = sum(1 for pronoun in male_pronouns if pronoun in text_lower)
+        female_pronoun_count = sum(1 for pronoun in female_pronouns if pronoun in text_lower)
+        
+        if male_pronoun_count > female_pronoun_count and male_pronoun_count > 0:
+            confidence_score += 0.3
+            indicators.append(f"Male pronouns found: {male_pronoun_count}")
+            if gender_info["gender"] == "Unknown":
+                gender_info["gender"] = "Male"
+        elif female_pronoun_count > male_pronoun_count and female_pronoun_count > 0:
+            confidence_score += 0.3
+            indicators.append(f"Female pronouns found: {female_pronoun_count}")
+            if gender_info["gender"] == "Unknown":
+                gender_info["gender"] = "Female"
+        
+        # Check titles
+        for title in male_titles:
+            if title in text_lower:
+                confidence_score += 0.5
+                indicators.append(f"Male title: {title}")
+                if gender_info["gender"] == "Unknown":
+                    gender_info["gender"] = "Male"
+                break
+        
+        for title in female_titles:
+            if title in text_lower:
+                confidence_score += 0.5
+                indicators.append(f"Female title: {title}")
+                if gender_info["gender"] == "Unknown":
+                    gender_info["gender"] = "Female"
+                break
+        
+        # Check professional gender-specific terms
+        for term in male_military:
+            if term in text_lower:
+                confidence_score += 0.2
+                indicators.append(f"Male professional term: {term}")
+                if gender_info["gender"] == "Unknown":
+                    gender_info["gender"] = "Male"
+        
+        for term in female_military:
+            if term in text_lower:
+                confidence_score += 0.2
+                indicators.append(f"Female professional term: {term}")
+                if gender_info["gender"] == "Unknown":
+                    gender_info["gender"] = "Female"
+        
+        # Check for gendered organizations (fraternities vs sororities)
+        if any(word in text_lower for word in ['fraternity', 'brotherhood', 'alpha phi alpha', 'kappa alpha psi']):
+            confidence_score += 0.3
+            indicators.append("Male organization membership")
+            if gender_info["gender"] == "Unknown":
+                gender_info["gender"] = "Male"
+        
+        if any(word in text_lower for word in ['sorority', 'sisterhood', 'alpha kappa alpha', 'delta sigma theta']):
+            confidence_score += 0.3
+            indicators.append("Female organization membership")
+            if gender_info["gender"] == "Unknown":
+                gender_info["gender"] = "Female"
+        
+        # Check for gender-specific life events or contexts
+        if any(phrase in text_lower for phrase in ['maternity leave', 'pregnancy', 'maiden name']):
+            confidence_score += 0.4
+            indicators.append("Female life event reference")
+            if gender_info["gender"] == "Unknown":
+                gender_info["gender"] = "Female"
+        
+        # Final confidence adjustment
+        gender_info["confidence"] = min(confidence_score, 1.0)
+        gender_info["indicators"] = indicators
+        
+        # If confidence is too low, mark as unknown
+        if gender_info["confidence"] < 0.3:
+            gender_info["gender"] = "Unknown"
+        
+        return gender_info
     
     def screen_candidates(self, position: str, max_candidates: Optional[int] = None) -> List[Dict[str, Any]]:
         """Screen all candidates for a specific position."""

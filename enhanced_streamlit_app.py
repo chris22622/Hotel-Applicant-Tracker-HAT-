@@ -179,6 +179,15 @@ def create_candidate_card(candidate, rank):
             st.write(f"📞 Phone: {candidate.get('phone', 'Not found')}")
             st.write(f"📍 Location: {candidate.get('location', 'Not specified')}")
             st.write(f"📄 File: {candidate.get('file_name', 'Unknown')}")
+            
+            # Gender information
+            gender = candidate.get('gender', 'Unknown')
+            gender_confidence = candidate.get('gender_confidence', 0.0)
+            if gender != 'Unknown':
+                confidence_emoji = "🔥" if gender_confidence > 0.7 else "✅" if gender_confidence > 0.4 else "❓"
+                st.write(f"👤 Gender: {gender} {confidence_emoji} ({gender_confidence:.1%} confidence)")
+            else:
+                st.write(f"👤 Gender: {gender}")
         
         with col2:
             st.write("**Experience & Skills:**")
@@ -244,6 +253,39 @@ def create_analytics_dashboard(results):
     
     with col4:
         st.metric("Recommended", recommended)
+    
+    # Gender distribution metrics
+    st.markdown("---")
+    st.subheader("👥 Gender Analytics")
+    
+    gender_counts = {}
+    for r in results:
+        gender = r.get('gender', 'Unknown')
+        gender_counts[gender] = gender_counts.get(gender, 0) + 1
+    
+    if gender_counts:
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            male_count = gender_counts.get('Male', 0)
+            st.metric("Male Candidates", male_count, f"{male_count/total_candidates*100:.1f}%" if total_candidates > 0 else "0%")
+        
+        with col2:
+            female_count = gender_counts.get('Female', 0)
+            st.metric("Female Candidates", female_count, f"{female_count/total_candidates*100:.1f}%" if total_candidates > 0 else "0%")
+        
+        with col3:
+            unknown_count = gender_counts.get('Unknown', 0)
+            st.metric("Unknown Gender", unknown_count, f"{unknown_count/total_candidates*100:.1f}%" if total_candidates > 0 else "0%")
+        
+        with col4:
+            # Show average confidence for detected genders
+            detected_candidates = [r for r in results if r.get('gender') in ['Male', 'Female']]
+            if detected_candidates:
+                avg_confidence = sum(r.get('gender_confidence', 0) for r in detected_candidates) / len(detected_candidates)
+                st.metric("Avg. Detection Confidence", f"{avg_confidence*100:.1f}%")
+            else:
+                st.metric("Detection Confidence", "N/A")
     
     # Charts
     col1, col2 = st.columns(2)
@@ -426,6 +468,14 @@ def main():
             help="Only show candidates above this score"
         )
         
+        # Gender filter
+        gender_filter = st.selectbox(
+            "Gender Filter:",
+            options=["All", "Male", "Female", "Unknown"],
+            index=0,
+            help="Filter candidates by detected gender"
+        )
+        
         auto_export = st.checkbox(
             "Auto-export to Excel",
             value=True,
@@ -472,6 +522,10 @@ def main():
                         
                         # Filter by score threshold
                         results = [r for r in results if r['total_score'] >= score_threshold]
+                        
+                        # Filter by gender if specified
+                        if gender_filter != "All":
+                            results = [r for r in results if r.get('gender', 'Unknown') == gender_filter]
                         
                         st.session_state.screening_results = results
                         
