@@ -451,7 +451,7 @@ def main():
     st.session_state.selected_position = selected_position
     
     # Advanced options
-    with st.sidebar.expander("⚙️ Advanced Options"):
+    with st.sidebar.expander("⚙️ Advanced Options", expanded=False):
         max_candidates = st.number_input(
             "Maximum Candidates to Display:",
             min_value=5,
@@ -526,6 +526,14 @@ def main():
             value=True,
             help="Automatically generate Excel report"
         )
+
+    # Reset filters
+    if st.sidebar.button("↩️ Reset Filters"):
+        # Clear related session state keys
+        for key in ("include_unknown_gender", "sort_by", "search_query", "page_size", "page"):
+            if key in st.session_state:
+                del st.session_state[key]
+        st.rerun()
     
     # File upload section
     st.subheader("📂 Upload Resume Files")
