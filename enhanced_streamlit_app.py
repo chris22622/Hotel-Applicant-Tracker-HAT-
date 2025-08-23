@@ -127,8 +127,9 @@ def initialize_session_state():
     if 'selected_position' not in st.session_state:
         st.session_state.selected_position = None
 
+@st.cache_data(show_spinner=False, ttl=600)
 def get_available_positions():
-    """Get list of available positions from the screener."""
+    """Get list of available positions from the screener (cached)."""
     if enhanced_available:
         screener = EnhancedHotelAIScreener()
         return list(screener.position_intelligence.keys())
@@ -475,6 +476,50 @@ def main():
             index=0,
             help="Filter candidates by detected gender"
         )
+
+        # Include Unknown when filtering by Male/Female
+        include_unknown_gender = False
+        if gender_filter in ("Male", "Female"):
+            include_unknown_gender = st.checkbox(
+                "Include 'Unknown' gender in results",
+                value=True,
+                help="When enabled, candidates with unknown gender will not be excluded"
+            )
+        st.session_state["include_unknown_gender"] = include_unknown_gender
+        
+        # Sorting options
+        sort_by = st.selectbox(
+            "Sort Results By:",
+            options=[
+                "Score (desc)",
+                "Score (asc)",
+                "Recommendation",
+                "Name (A-Z)",
+                "Name (Z-A)"
+            ],
+            index=0,
+            help="Choose how to sort the candidate list"
+        )
+        st.session_state["sort_by"] = sort_by
+
+        # Search within results
+        search_query = st.text_input(
+            "Search Candidates:",
+            value="",
+            help="Filter results by name, file name, or skill keyword"
+        )
+        st.session_state["search_query"] = search_query
+
+        # Pagination size
+        page_size = st.number_input(
+            "Results per page:",
+            min_value=5,
+            max_value=50,
+            value=10,
+            step=5,
+            help="How many candidates to show per page"
+        )
+        st.session_state["page_size"] = page_size
         
         auto_export = st.checkbox(
             "Auto-export to Excel",
@@ -525,7 +570,11 @@ def main():
                         
                         # Filter by gender if specified
                         if gender_filter != "All":
-                            results = [r for r in results if r.get('gender', 'Unknown') == gender_filter]
+                            include_unknown = st.session_state.get("include_unknown_gender", False)
+                            results = [
+                                r for r in results
+                                if r.get('gender', 'Unknown') == gender_filter or (include_unknown and r.get('gender', 'Unknown') == 'Unknown')
+                            ]
                         
                         st.session_state.screening_results = results
                         
@@ -551,24 +600,72 @@ def main():
         
         st.markdown("---")
         st.subheader("👥 Candidate Rankings")
-        
-        # Display candidates
-        for i, candidate in enumerate(results, 1):
+
+        # Apply search filter
+        search_query = (st.session_state.get("search_query") or "").strip().lower()
+        if search_query:
+            def _match(r):
+                name = str(r.get('candidate_name', '')).lower()
+                fname = str(r.get('file_name', '')).lower()
+                skills = ",".join(r.get('skills_found', [])).lower() if isinstance(r.get('skills_found'), list) else str(r.get('skills_found', ''))
+                return (search_query in name) or (search_query in fname) or (search_query in skills)
+            results = [r for r in results if _match(r)]
+
+        # Apply sorting
+        sort_by = st.session_state.get("sort_by", "Score (desc)")
+        if sort_by == "Score (desc)":
+            results = sorted(results, key=lambda r: r.get('total_score', 0), reverse=True)
+        elif sort_by == "Score (asc)":
+            results = sorted(results, key=lambda r: r.get('total_score', 0))
+        elif sort_by == "Recommendation":
+            results = sorted(results, key=lambda r: str(r.get('recommendation', '')))
+        elif sort_by == "Name (A-Z)":
+            results = sorted(results, key=lambda r: str(r.get('candidate_name', '')))
+        elif sort_by == "Name (Z-A)":
+            results = sorted(results, key=lambda r: str(r.get('candidate_name', '')), reverse=True)
+
+        # Pagination
+        page_size = st.session_state.get("page_size", 10)
+        total = len(results)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        page = st.session_state.get("page", 1)
+        page = max(1, min(page, total_pages))
+        start = (page - 1) * page_size
+        end = start + page_size
+        page_results = results[start:end]
+
+        # Display candidates for current page
+        for i, candidate in enumerate(page_results, start + 1):
             create_candidate_card(candidate, i)
+
+        # Pagination controls
+        col_prev, col_info, col_next = st.columns([1,2,1])
+        with col_prev:
+            if st.button("⬅️ Previous", disabled=page <= 1):
+                st.session_state["page"] = page - 1
+                st.rerun()
+        with col_info:
+            st.markdown(f"Page {page} of {total_pages} • Showing {len(page_results)} of {total}")
+        with col_next:
+            if st.button("Next ➡️", disabled=page >= total_pages):
+                st.session_state["page"] = page + 1
+                st.rerun()
         
-        # Export section
+    # Export section
+    if st.session_state.screening_results:
+        results = st.session_state.screening_results
         st.markdown("---")
         st.subheader("📊 Export Results")
-        
+
         col1, col2, col3 = st.columns(3)
-        
+
         with col1:
             if st.button("📄 Download Excel Report"):
                 excel_data = export_results_to_excel(results, selected_position)
                 if excel_data:
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     filename = f"screening_results_{selected_position}_{timestamp}.xlsx"
-                    
+
                     st.download_button(
                         label="💾 Download Excel File",
                         data=excel_data,
@@ -595,7 +692,7 @@ Top Candidates:
                         report += f"\n   Email: {candidate.get('email', 'Not found')}"
                         report += f"\n   Phone: {candidate.get('phone', 'Not found')}"
                         report += f"\n   Recommendation: {candidate.get('recommendation', 'Unknown')}\n"
-                
+
                 st.download_button(
                     label="📄 Download Text Report",
                     data=report,
@@ -604,9 +701,19 @@ Top Candidates:
                 )
         
         with col3:
+            # JSON Export
+            safe_json = json.dumps(results, indent=2, default=str)
+            st.download_button(
+                label="🧾 Download JSON",
+                data=safe_json,
+                file_name=f"screening_results_{selected_position}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json"
+            )
+
+            # Clear Results
             if st.button("🔄 Clear Results"):
                 st.session_state.screening_results = None
-                st.experimental_rerun()
+                st.rerun()
     
     # Footer
     st.markdown("---")
