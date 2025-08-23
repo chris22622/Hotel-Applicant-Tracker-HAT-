@@ -126,6 +126,16 @@ def initialize_session_state():
         st.session_state.uploaded_files = []
     if 'selected_position' not in st.session_state:
         st.session_state.selected_position = None
+    # Pagination and change-tracking defaults
+    if 'page' not in st.session_state:
+        st.session_state.page = 1
+    for key in (
+        'prev_sort_by', 'prev_search_query', 'prev_page_size',
+        'prev_score_threshold', 'prev_gender_filter',
+        'prev_selected_position', 'prev_include_unknown_gender'
+    ):
+        if key not in st.session_state:
+            st.session_state[key] = None
 
 @st.cache_data(show_spinner=False, ttl=600)
 def get_available_positions():
@@ -426,6 +436,30 @@ def export_results_to_excel(results, position):
     output.seek(0)
     return output
 
+def export_results_to_csv(results, position):
+    """Export results to CSV bytes (same fields as Excel export)."""
+    if not results:
+        return None
+    rows = []
+    for i, candidate in enumerate(results, 1):
+        rows.append({
+            'Rank': i,
+            'Name': candidate.get('candidate_name', 'Unknown'),
+            'Email': candidate.get('email', 'Not found'),
+            'Phone': candidate.get('phone', 'Not found'),
+            'Location': candidate.get('location', 'Not specified'),
+            'Total Score': f"{candidate.get('total_score', 0)*100:.1f}%",
+            'Recommendation': candidate.get('recommendation', 'Unknown'),
+            'Experience Years': candidate.get('experience_years', 0),
+            'Experience Quality': candidate.get('experience_quality', 'Unknown'),
+            'Skills Count': len(candidate.get('skills_found', [])),
+            'Key Skills': ', '.join(candidate.get('skills_found', [])[:5]),
+            'File Name': candidate.get('file_name', 'Unknown')
+        })
+    df = pd.DataFrame(rows)
+    csv_bytes = df.to_csv(index=False).encode('utf-8')
+    return csv_bytes
+
 def main():
     """Main Streamlit application."""
     initialize_session_state()
@@ -534,6 +568,39 @@ def main():
             if key in st.session_state:
                 del st.session_state[key]
         st.rerun()
+
+    # Auto-reset page to 1 if filters/sort/search/page size/position change
+    try:
+        _changed = False
+        if st.session_state.get('prev_selected_position') != selected_position:
+            _changed = True
+        if st.session_state.get('prev_score_threshold') != score_threshold:
+            _changed = True
+        if st.session_state.get('prev_gender_filter') != gender_filter:
+            _changed = True
+        if st.session_state.get('prev_include_unknown_gender') != st.session_state.get('include_unknown_gender'):
+            _changed = True
+        if st.session_state.get('prev_sort_by') != st.session_state.get('sort_by'):
+            _changed = True
+        if st.session_state.get('prev_search_query') != (st.session_state.get('search_query') or ""):
+            _changed = True
+        if st.session_state.get('prev_page_size') != st.session_state.get('page_size'):
+            _changed = True
+
+        # Update prev_* snapshots
+        st.session_state['prev_selected_position'] = selected_position
+        st.session_state['prev_score_threshold'] = score_threshold
+        st.session_state['prev_gender_filter'] = gender_filter
+        st.session_state['prev_include_unknown_gender'] = st.session_state.get('include_unknown_gender')
+        st.session_state['prev_sort_by'] = st.session_state.get('sort_by')
+        st.session_state['prev_search_query'] = st.session_state.get('search_query') or ""
+        st.session_state['prev_page_size'] = st.session_state.get('page_size')
+
+        if _changed:
+            st.session_state['page'] = 1
+    except Exception:
+        # Non-fatal: if any state not available yet, ignore
+        pass
     
     # File upload section
     st.subheader("📂 Upload Resume Files")
@@ -585,6 +652,8 @@ def main():
                             ]
                         
                         st.session_state.screening_results = results
+                        # Reset pagination on new results
+                        st.session_state['page'] = 1
                         
                         # Clean up temporary files
                         import shutil
@@ -716,6 +785,16 @@ Top Candidates:
                 data=safe_json,
                 file_name=f"screening_results_{selected_position}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                 mime="application/json"
+            )
+
+            # CSV Export
+            csv_bytes = export_results_to_csv(results, selected_position)
+            st.download_button(
+                label="🧾 Download CSV",
+                data=csv_bytes or b"",
+                file_name=f"screening_results_{selected_position}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                disabled=not bool(csv_bytes)
             )
 
             # Clear Results
