@@ -13,17 +13,26 @@ from pathlib import Path
 from datetime import datetime
 import base64
 from io import BytesIO
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 # Try to import plotting libraries with fallbacks
+# Predefine names for type checkers
+px: Any
+go: Any
+make_subplots: Any
 try:
-    import plotly.express as px
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
+    import plotly.express as px  # type: ignore[import-not-found]
+    import plotly.graph_objects as go  # type: ignore[import-not-found]
+    from plotly.subplots import make_subplots  # type: ignore[import-not-found]
     plotly_available = True
     st.success("✅ Advanced charting available")
 except ImportError:
     plotly_available = False
     st.warning("⚠️ Plotly not installed - using basic charts. Run Quick_Setup.bat to get advanced charts.")
+    # Assign dummies for runtime safety
+    px = None  # type: ignore[assignment]
+    go = None  # type: ignore[assignment]
+    make_subplots = None  # type: ignore[assignment]
 
 try:
     import matplotlib.pyplot as plt
@@ -33,13 +42,19 @@ except ImportError:
     matplotlib_available = False
 
 # Try to import the enhanced screener
+# Type-checker friendly optional imports
+EnhancedHotelAIScreener: Optional[Type[Any]] = None
+HotelAIScreener: Optional[Type[Any]] = None
+enhanced_available: bool = False
 try:
-    from enhanced_ai_screener import EnhancedHotelAIScreener
+    from enhanced_ai_screener import EnhancedHotelAIScreener as _EnhancedHotelAIScreener
+    EnhancedHotelAIScreener = _EnhancedHotelAIScreener
     enhanced_available = True
 except ImportError:
     # Fallback to original screener
     try:
-        from hotel_ai_screener import HotelAIScreener
+        from hotel_ai_screener import HotelAIScreener as _HotelAIScreener
+        HotelAIScreener = _HotelAIScreener
         enhanced_available = False
         st.warning("⚠️ Enhanced AI features not available - using basic screener")
     except ImportError:
@@ -138,19 +153,21 @@ def initialize_session_state():
             st.session_state[key] = None
 
 @st.cache_data(show_spinner=False, ttl=600)
-def get_available_positions():
+def get_available_positions() -> List[str]:
     """Get list of available positions from the screener (cached)."""
-    if enhanced_available:
+    if enhanced_available and EnhancedHotelAIScreener is not None:
         screener = EnhancedHotelAIScreener()
         return list(screener.position_intelligence.keys())
     else:
+        if HotelAIScreener is None:
+            return []
         screener = HotelAIScreener()
         return list(screener.get_hotel_job_intelligence().keys())
 
-def save_uploaded_files(uploaded_files):
+def save_uploaded_files(uploaded_files: List[Any]) -> Tuple[Path, List[Path]]:
     """Save uploaded files to temporary directory for processing."""
     temp_dir = Path(tempfile.mkdtemp())
-    saved_files = []
+    saved_files: List[Path] = []
     
     for uploaded_file in uploaded_files:
         file_path = temp_dir / uploaded_file.name
@@ -160,7 +177,7 @@ def save_uploaded_files(uploaded_files):
     
     return temp_dir, saved_files
 
-def create_candidate_card(candidate, rank):
+def create_candidate_card(candidate: Dict[str, Any], rank: int) -> None:
     """Create a styled candidate card."""
     recommendation = candidate.get('recommendation', 'Unknown')
     score = candidate.get('total_score', 0)
@@ -238,7 +255,7 @@ def create_candidate_card(candidate, rank):
                 })
                 st.bar_chart(chart_data.set_index('Category'))
 
-def create_analytics_dashboard(results):
+def create_analytics_dashboard(results: List[Dict[str, Any]]) -> None:
     """Create comprehensive analytics dashboard."""
     if not results:
         return
@@ -269,7 +286,7 @@ def create_analytics_dashboard(results):
     st.markdown("---")
     st.subheader("👥 Gender Analytics")
     
-    gender_counts = {}
+    gender_counts: Dict[str, int] = {}
     for r in results:
         gender = r.get('gender', 'Unknown')
         gender_counts[gender] = gender_counts.get(gender, 0) + 1
@@ -392,7 +409,7 @@ def create_analytics_dashboard(results):
             df_categories = pd.DataFrame(candidates_data)
             st.dataframe(df_categories, use_container_width=True)
 
-def export_results_to_excel(results, position):
+def export_results_to_excel(results: List[Dict[str, Any]], position: str) -> Optional[BytesIO]:
     """Export results to Excel and provide download link."""
     if not results:
         return None
@@ -436,7 +453,7 @@ def export_results_to_excel(results, position):
     output.seek(0)
     return output
 
-def export_results_to_csv(results, position):
+def export_results_to_csv(results: List[Dict[str, Any]], position: str) -> Optional[bytes]:
     """Export results to CSV bytes (same fields as Excel export)."""
     if not results:
         return None
@@ -460,7 +477,7 @@ def export_results_to_csv(results, position):
     csv_bytes = df.to_csv(index=False).encode('utf-8')
     return csv_bytes
 
-def main():
+def main() -> None:
     """Main Streamlit application."""
     initialize_session_state()
     
@@ -632,10 +649,12 @@ def main():
                         temp_dir, saved_files = save_uploaded_files(uploaded_files)
                         
                         # Initialize screener
-                        if enhanced_available:
+                        if enhanced_available and EnhancedHotelAIScreener is not None:
                             screener = EnhancedHotelAIScreener(str(temp_dir))
-                        else:
+                        elif HotelAIScreener is not None:
                             screener = HotelAIScreener(str(temp_dir))
+                        else:
+                            raise RuntimeError("No screener class available")
                         
                         # Process candidates
                         results = screener.screen_candidates(selected_position, max_candidates)
