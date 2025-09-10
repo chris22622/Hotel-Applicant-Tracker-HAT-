@@ -207,6 +207,23 @@ def create_candidate_card(candidate: Dict[str, Any], rank: int) -> None:
             st.write(f"📞 Phone: {candidate.get('phone', 'Not found')}")
             st.write(f"📍 Location: {candidate.get('location', 'Not specified')}")
             st.write(f"📄 File: {candidate.get('file_name', 'Unknown')}")
+            # Role evidence
+            if candidate.get('explicit_role_evidence'):
+                details = candidate.get('role_evidence_details', {}) or {}
+                matched_titles = ", ".join(details.get('matched_titles', [])[:4])
+                extras = []
+                if details.get('exact_title_match'):
+                    extras.append('exact title')
+                if details.get('training_hits'):
+                    extras.append('training')
+                if details.get('certification_hits'):
+                    extras.append('certification')
+                suffix = f" ({', '.join(extras)})" if extras else ""
+                st.write(f"🧭 Role Evidence: Yes{suffix}")
+                if matched_titles:
+                    st.caption(f"Matches: {matched_titles}")
+            else:
+                st.write("🧭 Role Evidence: No")
             
             # Gender information
             gender = candidate.get('gender', 'Unknown')
@@ -503,6 +520,15 @@ def main() -> None:
     
     # Advanced options
     with st.sidebar.expander("⚙️ Advanced Options", expanded=False):
+        strict_role_match = st.checkbox(
+            "Require explicit role/title/training evidence",
+            value=True,
+            help=(
+                "Only show candidates whose resume explicitly mentions this role (or clear aliases) "
+                "as a title, or shows training/certification tied to the role."
+            ),
+        )
+        st.session_state["strict_role_match"] = strict_role_match
         max_candidates = st.number_input(
             "Maximum Candidates to Display:",
             min_value=5,
@@ -657,7 +683,26 @@ def main() -> None:
                             raise RuntimeError("No screener class available")
                         
                         # Process candidates
-                        results = screener.screen_candidates(selected_position, max_candidates)
+                        results = screener.screen_candidates(
+                            selected_position,
+                            max_candidates,
+                            require_explicit_role=st.session_state.get("strict_role_match", True),
+                        )
+
+                        # Enforce strict role evidence if enabled and available
+                        if st.session_state.get("strict_role_match", True):
+                            if results and all("explicit_role_evidence" in r for r in results):
+                                before_ct = len(results)
+                                results = [r for r in results if r.get("explicit_role_evidence", False)]
+                                removed_ct = before_ct - len(results)
+                                if removed_ct > 0:
+                                    st.info(
+                                        f"Filtered out {removed_ct} candidate(s) without explicit role/title/training evidence.")
+                            else:
+                                st.warning(
+                                    "Strict role match is enabled, but this engine didn't return role-evidence flags. "
+                                    "Results are shown without strict filtering."
+                                )
                         
                         # Filter by score threshold
                         results = [r for r in results if r['total_score'] >= score_threshold]

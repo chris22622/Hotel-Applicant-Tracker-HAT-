@@ -5618,6 +5618,9 @@ class EnhancedHotelAIScreener:
             gender_info = self._detect_gender(text, candidate_info.get("name", "Unknown"))
             
             scoring_result = self.calculate_enhanced_score(candidate_data, position)
+
+            # Detect explicit role evidence (title or training/certification for the searched position)
+            role_evidence_details = self._detect_explicit_role_evidence(text, position)
             
             # Compile final result
             result = {
@@ -5636,6 +5639,9 @@ class EnhancedHotelAIScreener:
                 "skills_found": skill_analysis["skills"],
                 "experience_years": experience_analysis["total_years"],
                 "experience_quality": experience_analysis["experience_quality"],
+                # Strict-role-match support
+                "explicit_role_evidence": role_evidence_details.get("has_evidence", False),
+                "role_evidence_details": role_evidence_details,
                 "processed_at": datetime.now().isoformat()
             }
             
@@ -5645,6 +5651,110 @@ class EnhancedHotelAIScreener:
         except Exception as e:
             logger.error(f"❌ Error processing {file_path.name}: {e}")
             return None
+
+    def _detect_explicit_role_evidence(self, text: str, position: str) -> Dict[str, Any]:
+        """Detect explicit evidence that the resume matches the searched role.
+
+        Evidence includes:
+        - Exact/alias job titles (e.g., "Head Butler", "Personal Butler", "Butler Supervisor")
+        - Training/certifications clearly tied to the role (e.g., "Butler certification", "Butler training")
+
+        Returns dict with keys:
+        { has_evidence: bool, exact_title_match: bool, matched_titles: List[str], training_hits: List[str], certification_hits: List[str] }
+        """
+        try:
+            txt = (text or "").lower()
+            # Avoid common false positives
+            false_positive_blocks = [
+                "butler university",  # educational institution unrelated to role
+                "butler county",
+            ]
+            for fp in false_positive_blocks:
+                txt = txt.replace(fp, "")
+
+            pos = position.strip()
+            pos_lower = pos.lower()
+
+            # Collect role aliases and indicators from position intelligence
+            position_data = self.position_intelligence.get(pos, {})
+            indicators = set()
+            if position_data:
+                for key in ("experience_indicators",):
+                    for v in position_data.get(key, []) or []:
+                        indicators.add(v.lower())
+
+            # Always include the position itself
+            indicators.add(pos_lower)
+
+            # Derive core tokens (e.g., for "Head Butler" -> ["head butler", "butler"]) but avoid single-token matches that are too generic unless paired
+            core_tokens = [pos_lower]
+            parts = [p for p in pos_lower.split() if p]
+            if len(parts) > 1:
+                # add the last word (often the core role, e.g., "butler") but only use it with context
+                core_tokens.append(parts[-1])
+
+            # Title patterns to check
+            matched_titles: list[str] = []
+            exact_title_match = False
+            for phrase in sorted(indicators, key=len, reverse=True):
+                if phrase and phrase in txt:
+                    matched_titles.append(phrase)
+                    if phrase == pos_lower:
+                        exact_title_match = True
+
+            # Additional contextual title cues
+            contextual_cues = [
+                "worked as ", "experience as ", "position: ", "role: ", "title: ", "promoted to ", "served as ", "hired as "
+            ]
+            context_hit = any(any(f"{cue}{phrase}" in txt for cue in contextual_cues) for phrase in indicators)
+
+            # Training / certification evidence near role tokens
+            train_words = ["training", "trained", "diploma", "certificate", "certification", "certified", "course"]
+            certification_hits: list[str] = []
+            training_hits: list[str] = []
+
+            def _near_role(word: str) -> bool:
+                # Simple proximity check around role tokens
+                for token in core_tokens:
+                    if not token:
+                        continue
+                    # require both appear within a short window
+                    idx = txt.find(token)
+                    while idx != -1:
+                        start = max(0, idx - 60)
+                        end = min(len(txt), idx + len(token) + 60)
+                        window = txt[start:end]
+                        if word in window and (token in (pos_lower, parts[-1] if parts else token)):
+                            return True
+                        idx = txt.find(token, idx + 1)
+                return False
+
+            # Populate training/cert hits
+            for w in train_words:
+                if _near_role(w):
+                    if "cert" in w:
+                        certification_hits.append(w)
+                    else:
+                        training_hits.append(w)
+
+            has_evidence = bool(exact_title_match or context_hit or matched_titles or certification_hits or training_hits)
+
+            return {
+                "has_evidence": has_evidence,
+                "exact_title_match": bool(exact_title_match),
+                "matched_titles": sorted(set(matched_titles)),
+                "training_hits": sorted(set(training_hits)),
+                "certification_hits": sorted(set(certification_hits)),
+            }
+        except Exception:
+            # Never break the pipeline on detection errors
+            return {
+                "has_evidence": False,
+                "exact_title_match": False,
+                "matched_titles": [],
+                "training_hits": [],
+                "certification_hits": [],
+            }
     
     def _extract_text_from_file(self, file_path: Path) -> str:
         """Extract text from various file formats."""
@@ -5905,7 +6015,7 @@ class EnhancedHotelAIScreener:
         
         return gender_info
     
-    def screen_candidates(self, position: str, max_candidates: Optional[int] = None) -> List[Dict[str, Any]]:
+    def screen_candidates(self, position: str, max_candidates: Optional[int] = None, require_explicit_role: bool = True) -> List[Dict[str, Any]]:
         """Screen all candidates for a specific position."""
         logger.info(f"🎯 Starting candidate screening for: {position}")
         
@@ -5927,6 +6037,15 @@ class EnhancedHotelAIScreener:
             result = self.process_single_resume(file_path, position)
             if result:
                 candidates.append(result)
+
+        # Optional strict filter: keep only candidates with explicit role/title/training evidence
+        if require_explicit_role:
+            with_evidence = [c for c in candidates if c.get("explicit_role_evidence", False)]
+            if with_evidence:
+                logger.info(f"🔎 Strict role filter retained {len(with_evidence)} of {len(candidates)} candidates")
+                candidates = with_evidence
+            else:
+                logger.info("🔎 Strict role filter found no explicit matches; returning unfiltered results")
         
         # Sort by score (highest first)
         candidates.sort(key=lambda x: x["total_score"], reverse=True)
