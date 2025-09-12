@@ -55,26 +55,150 @@ except ImportError:
 
 class EnhancedHotelAIScreener:
     """Enhanced AI-powered hotel resume screener with advanced matching algorithms."""
-    
-    def __init__(self, input_dir: str = "input_resumes", output_dir: str = "screening_results"):
+
+    def __init__(self, input_dir: str = "input_resumes", output_dir: str = "screening_results", job_desc_dir: Optional[str] = "job_descriptions"):
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
-        
+
         # Initialize enhanced position intelligence
         self.position_intelligence = self._load_enhanced_position_intelligence()
-        
+
         # Initialize skill taxonomy
         self.skill_taxonomy = self._build_skill_taxonomy()
-        
+
+        # Optional job description directory (PDF / TXT) enrichment
+        self.job_desc_dir = Path(job_desc_dir) if job_desc_dir else None
+        if self.job_desc_dir and self.job_desc_dir.exists():
+            self._augment_with_job_descriptions(self.job_desc_dir)
+        else:
+            logger.info("ℹ️ No external job descriptions folder found or provided.")
+
         # Initialize semantic matcher if spacy available
         if spacy_available and nlp:
             self.matcher = Matcher(nlp.vocab)
             self._setup_patterns()
-        
-        logger.info(f"🏨 Enhanced Hotel AI Screener initialized")
+
+        logger.info("🏨 Enhanced Hotel AI Screener initialized")
         logger.info(f"📁 Input: {self.input_dir}")
         logger.info(f"📁 Output: {self.output_dir}")
+        if self.job_desc_dir:
+            logger.info(f"📄 Job Descriptions: {self.job_desc_dir} (loaded)")
+
+    def _augment_with_job_descriptions(self, folder: Path) -> None:
+        """Enrich position intelligence with keywords extracted from job description PDF/TXT files.
+
+        Strategy:
+        - Match filename (stem) to existing position key (case-insensitive) or create new entry.
+        - Extract text from .txt directly; for .pdf try PyPDF2; fall back to OCR if available.
+        - Tokenize, remove stopwords / boilerplate; keep top-N frequent unique tokens not already present.
+        - Store in position_data['job_description_keywords'] (max 50) for scoring bonus later.
+        - Maintain raw text map for potential TF-IDF similarity (self._jd_raw_texts).
+        """
+        self._jd_raw_texts: Dict[str, str] = {}
+        files = list(folder.glob("*.txt")) + list(folder.glob("*.pdf"))
+        if not files:
+            logger.info(f"ℹ️ No job description files found in {folder}")
+            return
+
+        try:
+            import PyPDF2  # type: ignore
+            pdf_ok = True
+        except Exception:
+            pdf_ok = False
+            logger.warning("⚠️ PyPDF2 not installed - PDF JD parsing limited (install PyPDF2 for better extraction)")
+
+        stop_words = {
+            "the","and","for","with","that","this","from","into","your","you","our","are","was","were",
+            "will","shall","but","not","any","all","per","job","role","responsibilities","duties","ability",
+            "skills","other","such","etc","more","have","has","one","two","three","may","their","them","they",
+            "her","his","she","him","who","prior","work","years","year","requirements","qualifications","position",
+            "hotel","hospitality","guest","service","experience","candidate","team","perform","ensure","provide"
+        }
+
+        def extract_text(path: Path) -> str:
+            if path.suffix.lower() == ".txt":
+                return path.read_text(encoding="utf-8", errors="ignore")
+            if path.suffix.lower() == ".pdf":
+                text = ""
+                # Try PyPDF2
+                if pdf_ok:
+                    try:
+                        with open(path, "rb") as fh:
+                            reader = PyPDF2.PdfReader(fh)  # type: ignore
+                            for page in reader.pages:
+                                page_text = page.extract_text() or ""
+                                text += page_text + "\n"
+                    except Exception as e:
+                        logger.debug(f"PDF parse issue ({path.name}) via PyPDF2: {e}")
+                # Fallback OCR if empty and OCR available
+                if not text.strip() and ocr_available:
+                    try:
+                        images = pdf2image.convert_from_path(path)  # type: ignore
+                        ocr_chunks = []
+                        for img in images[:10]:  # safety cap
+                            try:
+                                ocr_chunks.append(pytesseract.image_to_string(img))  # type: ignore
+                            except Exception:
+                                pass
+                        text = "\n".join(ocr_chunks)
+                    except Exception as e:
+                        logger.debug(f"OCR fallback failed for {path.name}: {e}")
+                return text
+            return ""
+
+        def extract_keywords(text: str) -> List[str]:
+            tokens = re.findall(r"\b[a-z]{3,}\b", text.lower())
+            freq = Counter(t for t in tokens if t not in stop_words)
+            return [w for w, _ in freq.most_common(120)]
+
+        enriched = 0
+        for f in files:
+            try:
+                raw = extract_text(f)
+                if len(raw.strip()) < 40:
+                    continue
+                stem = f.stem.replace("_", " ").strip()
+                # map to existing position intelligence key if case-insensitive match
+                key = None
+                for existing in self.position_intelligence.keys():
+                    if existing.lower() == stem.lower():
+                        key = existing
+                        break
+                if key is None:
+                    key = stem
+                    # Create minimal structure if new
+                    if key not in self.position_intelligence:
+                        self.position_intelligence[key] = {
+                            "must_have_skills": [],
+                            "nice_to_have_skills": [],
+                            "technical_skills": [],
+                            "soft_skills": [],
+                            "experience_indicators": [],
+                            "cultural_fit_keywords": [],
+                            "disqualifying_factors": [],
+                            "scoring_weights": {"experience":0.30,"skills":0.30,"cultural_fit":0.20,"hospitality":0.20},
+                            "min_experience_years": 0,
+                            "preferred_experience_years": 1
+                        }
+                kw = extract_keywords(raw)
+                existing_sets = set(
+                    (self.position_intelligence[key].get("job_description_keywords") or []) +
+                    self.position_intelligence[key].get("must_have_skills", []) +
+                    self.position_intelligence[key].get("nice_to_have_skills", []) +
+                    self.position_intelligence[key].get("technical_skills", []) +
+                    self.position_intelligence[key].get("experience_indicators", [])
+                )
+                jd_keywords = [w for w in kw if w not in existing_sets][:50]
+                if jd_keywords:
+                    self.position_intelligence[key]["job_description_keywords"] = jd_keywords
+                    enriched += 1
+                self._jd_raw_texts[key] = raw
+            except Exception as fe:
+                logger.debug(f"Job description parse failed for {f.name}: {fe}")
+                continue
+
+        logger.info(f"🧠 Job description enrichment applied to {enriched} position(s)")
     
     def _load_enhanced_position_intelligence(self) -> Dict[str, Dict[str, Any]]:
         """Load comprehensive hotel position intelligence with advanced requirements for ALL hotel positions."""
@@ -5223,6 +5347,46 @@ class EnhancedHotelAIScreener:
             return {"total_score": 0, "breakdown": {}, "recommendation": "Unable to evaluate"}
         
         resume_text = candidate.get("resume_text", "").lower()
+
+        # -------------------------------------------------------------
+        # Job Description Keyword & Similarity Bonuses (optional)
+        # -------------------------------------------------------------
+        jd_keywords = position_data.get("job_description_keywords", []) or []
+        jd_bonus_experience = 0.0
+        jd_bonus_skills = 0.0
+        jd_similarity = None
+        matched_jd_terms: List[str] = []
+        if jd_keywords:
+            try:
+                resume_tokens = set(re.findall(r"\b[a-z]{3,}\b", resume_text))
+                kw_set = set(jd_keywords)
+                matched_jd_terms = sorted(list(kw_set.intersection(resume_tokens)))
+                if matched_jd_terms:
+                    coverage = len(matched_jd_terms) / (len(kw_set) + 1e-6)
+                    total_bonus = min(0.10, coverage * 0.10)  # cap 0.10
+                    jd_bonus_experience = total_bonus * 0.6
+                    jd_bonus_skills = total_bonus * 0.4
+            except Exception:
+                pass
+
+            # TF-IDF similarity bonus (requires sklearn)
+            try:
+                from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
+                from sklearn.metrics.pairwise import cosine_similarity  # type: ignore
+                if hasattr(self, "_jd_raw_texts"):
+                    jd_raw = self._jd_raw_texts.get(position) or ""  # type: ignore
+                    if jd_raw and len(jd_raw) > 40:
+                        vectorizer = TfidfVectorizer(max_features=4000, ngram_range=(1,2))
+                        docs = [jd_raw.lower(), resume_text]
+                        tfidf = vectorizer.fit_transform(docs)
+                        sim = cosine_similarity(tfidf[0:1], tfidf[1:2])[0][0]
+                        jd_similarity = float(sim)
+                        # similarity contributes up to additional 0.05 split evenly
+                        sim_bonus = min(0.05, sim * 0.05)
+                        jd_bonus_experience += sim_bonus * 0.5
+                        jd_bonus_skills += sim_bonus * 0.5
+            except Exception:
+                pass
         
         # Get position-specific requirements
         must_have_skills = position_data.get("must_have_skills", [])
@@ -5321,7 +5485,9 @@ class EnhancedHotelAIScreener:
             experience_score += 0.1 * min(leadership_found, 3)
         if progression_found > 0:
             experience_score += 0.05 * min(progression_found, 2)
-        
+
+        # Apply JD experience bonus before capping
+        experience_score += jd_bonus_experience
         scores["experience_relevance"] = min(experience_score, 1.0)
         breakdown["experience"] = {
             "score": scores["experience_relevance"],
@@ -5384,6 +5550,8 @@ class EnhancedHotelAIScreener:
             elif coverage_ratio > 0.5:
                 skills_score += 0.1
         
+        # Apply JD skills bonus before capping
+        skills_score += jd_bonus_skills
         scores["skills_match"] = min(skills_score, 1.0)
         breakdown["skills"] = {
             "score": scores["skills_match"],
@@ -5392,6 +5560,16 @@ class EnhancedHotelAIScreener:
             "nice_to_have_found": nice_to_have_found,
             "technical_found": technical_found,
             "coverage_ratio": total_skills_found / max(total_skills_available, 1)
+        }
+
+        # Job description enrichment breakdown
+        breakdown["job_description"] = {
+            "keywords_defined": bool(jd_keywords),
+            "keyword_count": len(jd_keywords),
+            "matched_keywords": matched_jd_terms,
+            "experience_bonus": round(jd_bonus_experience, 4),
+            "skills_bonus": round(jd_bonus_skills, 4),
+            "similarity": round(jd_similarity, 4) if jd_similarity is not None else None
         }
         
         # 3. EDUCATION & CERTIFICATION ANALYSIS (15% weight)
