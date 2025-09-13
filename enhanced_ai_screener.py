@@ -7,6 +7,8 @@ Advanced AI-powered candidate selection with semantic matching, bias detection, 
 import os
 import sys
 import json
+import hashlib
+import yaml
 import yaml
 import logging
 import statistics
@@ -53,16 +55,71 @@ except ImportError:
     logger.warning("⚠️ Advanced text analysis not available")
 
 
+SCORING_VERSION = "4.0.0"
+
+# Role ontology for title normalization
+ROLE_ONTOLOGY: Dict[str, List[str]] = {
+    "front desk agent": ["front desk", "receptionist", "guest services agent", "front office associate"],
+    "front desk manager": ["front office manager", "guest services manager", "front desk supervisor"],
+    "housekeeper": ["room attendant", "housekeeping attendant", "cleaning staff"],
+    "housekeeping supervisor": ["housekeeping lead", "housekeeping manager"],
+    "server": ["waiter", "waitress", "food server", "restaurant server"],
+    "host": ["hostess", "restaurant host"],
+    "bartender": ["bar staff", "mixologist"],
+    "chef": ["cook", "line cook", "sous chef", "head chef", "executive chef"],
+    "butler": ["head butler", "personal butler", "butler supervisor"],
+    "concierge": ["guest concierge"],
+    "spa therapist": ["massage therapist", "spa specialist"],
+    "security officer": ["security guard", "loss prevention"],
+    "sales manager": ["hospitality sales manager", "hotel sales manager"],
+}
+
+# Skill alias graph (maps alias -> canonical skill)
+SKILL_ALIASES: Dict[str, str] = {
+    "pos": "point of sale",
+    "pms": "property management system",
+    "ms office": "microsoft office",
+    "excel": "microsoft excel",
+    "word": "microsoft word",
+    "outlook": "microsoft outlook",
+    "cust service": "customer service",
+    "cs": "customer service",
+    "food prep": "food preparation",
+    "mixology": "bartending",
+    "line cook": "cook",
+    "sous chef": "chef",
+    "exec chef": "executive chef",
+}
+
+# Negative domain signals (if frequently present, candidate likely outside hospitality focus)
+NEGATIVE_DOMAIN_TERMS = [
+    "warehouse", "forklift", "logistics", "assembly line", "manufacturing",
+    "construction", "oilfield", "mining", "truck driving", "long haul",
+]
+
 class EnhancedHotelAIScreener:
     """Enhanced AI-powered hotel resume screener with advanced matching algorithms."""
 
-    def __init__(self, input_dir: str = "input_resumes", output_dir: str = "screening_results", job_desc_dir: Optional[str] = "job_descriptions"):
+    def __init__(self, input_dir: str = "input_resumes", output_dir: str = "screening_results", job_desc_dir: Optional[str] = "job_descriptions", config_dir: str = "config"):
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
+        self.config_dir = Path(config_dir)
+        self.config_dir.mkdir(exist_ok=True)
 
         # Initialize enhanced position intelligence
         self.position_intelligence = self._load_enhanced_position_intelligence()
+
+        # Attempt to load external scoring overrides
+        self._config = {}
+        scoring_cfg = self.config_dir / "scoring.yaml"
+        if scoring_cfg.exists():
+            try:
+                with open(scoring_cfg, "r", encoding="utf-8") as fh:
+                    self._config = yaml.safe_load(fh) or {}
+                logger.info("🛠 Loaded scoring config overrides from scoring.yaml")
+            except Exception as e:
+                logger.warning(f"Failed to load scoring config: {e}")
 
         # Initialize skill taxonomy
         self.skill_taxonomy = self._build_skill_taxonomy()
@@ -74,16 +131,344 @@ class EnhancedHotelAIScreener:
         else:
             logger.info("ℹ️ No external job descriptions folder found or provided.")
 
+        # Track duplicate resume hashes
+        self._seen_hashes = set()
+
         # Initialize semantic matcher if spacy available
         if spacy_available and nlp:
             self.matcher = Matcher(nlp.vocab)
             self._setup_patterns()
+        # Embedding cache & model placeholders
+        self._embedding_model = None
+        self._embedding_dim = None
+        self._embed_cache: Dict[str, List[float]] = {}
+        # Try load persisted embeddings
+        try:
+            self._load_embedding_cache()
+        except Exception:
+            pass
+
+        # Explain / debug modes
+        self._explain_mode = False
+        self._debug_emb = False
+
+        # Plugin loader cache (lazy-loaded list of callables)
+        self._plugin_hooks = None
 
         logger.info("🏨 Enhanced Hotel AI Screener initialized")
         logger.info(f"📁 Input: {self.input_dir}")
         logger.info(f"📁 Output: {self.output_dir}")
         if self.job_desc_dir:
             logger.info(f"📄 Job Descriptions: {self.job_desc_dir} (loaded)")
+        logger.info(f"🧪 Scoring Version: {SCORING_VERSION}")
+
+    # ---------------- Metrics & Benchmarks -----------------
+    def _metrics_dir(self) -> Path:
+        d = Path("var/metrics")
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _scores_log_path(self) -> Path:
+        return self._metrics_dir() / "scores.jsonl"
+
+    def _read_score_samples(self) -> List[Dict[str, Any]]:
+        p = self._scores_log_path()
+        samples: List[Dict[str, Any]] = []
+        if not p.exists():
+            return samples
+        try:
+            with open(p, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                        if isinstance(rec, dict) and "score" in rec and "position" in rec:
+                            samples.append(rec)
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return samples
+
+    def _append_score_sample(self, position: str, score: float) -> None:
+        rec = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "position": position,
+            "score": float(score),
+            "version": SCORING_VERSION,
+        }
+        try:
+            with open(self._scores_log_path(), "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(rec) + "\n")
+        except Exception as e:
+            logger.debug(f"Scores log append failed: {e}")
+
+    def _percentile(self, values: List[float], x: float) -> Optional[float]:
+        if not values:
+            return None
+        try:
+            # percent of values <= x
+            n = len(values)
+            rank = sum(1 for v in values if v <= x)
+            return round(100.0 * rank / n, 2)
+        except Exception:
+            return None
+
+    # ---------------- Plugin System -----------------
+    def _plugins_dir(self) -> Path:
+        d = Path("plugins")
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _load_plugins(self) -> List[Any]:
+        if self._plugin_hooks is not None:
+            return self._plugin_hooks
+        hooks: List[Any] = []
+        try:
+            import importlib.util
+            for py in self._plugins_dir().glob("*.py"):
+                if py.name.startswith("__"):
+                    continue
+                try:
+                    spec = importlib.util.spec_from_file_location(py.stem, str(py))
+                    if spec and spec.loader:  # type: ignore
+                        mod = importlib.util.module_from_spec(spec)  # type: ignore
+                        spec.loader.exec_module(mod)  # type: ignore
+                        fn = getattr(mod, "augment_score", None)
+                        if callable(fn):
+                            hooks.append({"id": py.stem, "fn": fn})
+                except Exception as pe:
+                    logger.debug(f"Plugin load failed for {py.name}: {pe}")
+        except Exception as e:
+            logger.debug(f"Plugin discovery error: {e}")
+        self._plugin_hooks = hooks
+        if hooks:
+            logger.info(f"🔌 Loaded {len(hooks)} plugin(s)")
+        return hooks
+
+    def _apply_scoring_overrides(self, weights: Dict[str, float]) -> Dict[str, float]:
+        try:
+            override = (self._config.get("weights") or {}) if hasattr(self, "_config") else {}
+            if not override:
+                return weights
+            merged = {**weights}
+            for k,v in override.items():
+                if isinstance(v, (int,float)) and k in merged:
+                    merged[k] = float(v)
+            total = sum(merged.values())
+            if total > 0:
+                # normalize back to 1.0
+                merged = {k: v/total for k,v in merged.items()}
+            return merged
+        except Exception:
+            return weights
+
+    # ---------------- Explain Mode Controls -----------------
+    def set_explain_mode(self, enabled: bool = True, debug_embeddings: bool = False) -> None:
+        """Toggle global explainability output.
+
+        enabled: if True, scoring returns detailed 'explanation' dict
+        debug_embeddings: if True, include embedding similarity raw values
+        """
+        self._explain_mode = bool(enabled)
+        self._debug_emb = bool(debug_embeddings)
+        logger.info(f"🔍 Explain mode {'ENABLED' if self._explain_mode else 'DISABLED'} (embeddings debug={'on' if self._debug_emb else 'off'})")
+
+    # ---------------- Embedding Utilities -----------------
+    def _get_embedding_model(self):
+        if self._embedding_model is not None:
+            return self._embedding_model
+        try:
+            from sentence_transformers import SentenceTransformer  # type: ignore
+            model_name = (self._config.get("embeddings", {}) or {}).get("model", "all-MiniLM-L6-v2")
+            self._embedding_model = SentenceTransformer(model_name)
+            self._embedding_dim = len(self._embedding_model.encode(["test"], show_progress_bar=False)[0])  # type: ignore
+            logger.info(f"🧠 Loaded embedding model: {model_name}")
+        except Exception as e:
+            logger.info(f"ℹ️ Embedding model unavailable ({e}); proceeding without embeddings")
+            self._embedding_model = None
+        return self._embedding_model
+
+    def _embed_text(self, text: str) -> Optional[List[float]]:
+        key = hashlib.md5(text.encode("utf-8")).hexdigest()
+        if key in self._embed_cache:
+            return self._embed_cache[key]
+        model = self._get_embedding_model()
+        if not model:
+            return None
+        try:
+            vec = model.encode([text], show_progress_bar=False)[0]  # type: ignore
+            self._embed_cache[key] = list(map(float, vec))
+            # Persist occasionally
+            if len(self._embed_cache) % 25 == 0:
+                try:
+                    self._save_embedding_cache()
+                except Exception:
+                    pass
+            return self._embed_cache[key]
+        except Exception:
+            return None
+
+    def _cache_dir(self) -> Path:
+        d = Path("var/cache")
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _embedding_cache_path(self) -> Path:
+        return self._cache_dir() / "embeddings.json"
+
+    def _load_embedding_cache(self) -> None:
+        p = self._embedding_cache_path()
+        if p.exists():
+            try:
+                import json
+                with open(p, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                if isinstance(data, dict):
+                    # ensure list[float]
+                    cleaned = {}
+                    for k,v in data.items():
+                        if isinstance(v, list):
+                            try:
+                                cleaned[k] = [float(x) for x in v]
+                            except Exception:
+                                continue
+                    self._embed_cache.update(cleaned)
+                    logger.info(f"🗂 Loaded {len(cleaned)} cached embeddings")
+            except Exception as e:
+                logger.warning(f"Failed loading embedding cache: {e}")
+
+    def _save_embedding_cache(self) -> None:
+        try:
+            import json
+            p = self._embedding_cache_path()
+            with open(p, "w", encoding="utf-8") as fh:
+                json.dump(self._embed_cache, fh)
+        except Exception as e:
+            logger.debug(f"Embed cache save skipped: {e}")
+
+    def _embedding_cosine(self, a: List[float], b: List[float]) -> float:
+        try:
+            import math
+            dot = sum(x*y for x,y in zip(a,b))
+            na = math.sqrt(sum(x*x for x in a))
+            nb = math.sqrt(sum(x*x for x in b))
+            if na == 0 or nb == 0:
+                return 0.0
+            return dot / (na*nb)
+        except Exception:
+            return 0.0
+
+    # ------------------------ Section Segmentation ------------------------
+    def _segment_resume_sections(self, text: str) -> Dict[str, str]:
+        """Rudimentary section segmentation using regex headers.
+        Returns dict {section_name: joined_text}.
+        Safe fallback: returns single 'full_text' if no headers.
+        """
+        try:
+            lines = [ln.strip() for ln in text.splitlines()]
+            header_pattern = re.compile(r"^(experience|work experience|professional experience|education|skills|certifications|summary|profile|objective|projects|training)[:\-]?$", re.IGNORECASE)
+            sections: Dict[str, List[str]] = {}
+            current = None
+            for ln in lines:
+                if not ln:
+                    continue
+                if header_pattern.match(ln.lower()):
+                    current = ln.lower().rstrip(':')
+                    sections.setdefault(current, [])
+                else:
+                    if current is None:
+                        current = 'preamble'
+                        sections.setdefault(current, [])
+                    sections[current].append(ln)
+            if not sections:
+                return {"full_text": text}
+            return {k: "\n".join(v) for k,v in sections.items()}
+        except Exception:
+            return {"full_text": text}
+
+    # ------------------------ Career Timeline Analysis ------------------------
+    def _analyze_career_timeline(self, text: str) -> Dict[str, Any]:
+        """Extract years and detect gaps. Simple heuristic: find year ranges like 2019-2022.
+        Returns {roles: [...], total_years: float, gaps: [...]}.
+        """
+        try:
+            year_range_pattern = re.compile(r"(19\d{2}|20\d{2})\s*[\-–to]{1,3}\s*(19\d{2}|20\d{2}|present|current)", re.IGNORECASE)
+            single_year_pattern = re.compile(r"(19\d{2}|20\d{2})")
+            ranges = []
+            for m in year_range_pattern.finditer(text):
+                start_raw, end_raw = m.group(1), m.group(2)
+                try:
+                    start = int(start_raw)
+                    end = datetime.now().year if end_raw.lower() in ("present","current") else int(end_raw)
+                    if end >= start and 1900 <= start <= datetime.now().year:
+                        ranges.append((start,end))
+                except Exception:
+                    continue
+            # If no ranges, attempt approximate from individual years
+            if not ranges:
+                years = sorted({int(y) for y in single_year_pattern.findall(text) if 1900 <= int(y) <= datetime.now().year})
+                if len(years) >= 2:
+                    ranges.append((years[0], years[-1]))
+            # Merge overlaps
+            ranges = sorted(ranges)
+            merged = []
+            for r in ranges:
+                if not merged or r[0] > merged[-1][1] + 1:
+                    merged.append(list(r))
+                else:
+                    merged[-1][1] = max(merged[-1][1], r[1])
+            total = sum(e - s + 1 for s,e in merged)
+            # Detect gaps between merged intervals > 6 months (approx by year diff >1)
+            gaps = []
+            for i in range(1, len(merged)):
+                prev_end = merged[i-1][1]
+                cur_start = merged[i][0]
+                if cur_start - prev_end > 1:
+                    gaps.append({"from": prev_end+1, "to": cur_start-1})
+            return {
+                "intervals": merged,
+                "total_year_span": total,
+                "gaps": gaps,
+                "gap_count": len(gaps)
+            }
+        except Exception:
+            return {"intervals": [], "total_year_span": 0, "gaps": [], "gap_count": 0}
+
+    def _temporal_experience_weight(self, timeline: Dict[str, Any]) -> float:
+        """Compute a temporal weighting factor favoring recent continuous experience.
+
+        Heuristic:
+        - Determine coverage in last 5 years, last 2 years.
+        - Reward if at least one interval touches current year (recency).
+        Returns multiplier in [0.9, 1.15].
+        """
+        try:
+            intervals = timeline.get("intervals") or []
+            if not intervals:
+                return 1.0
+            current_year = datetime.now().year
+            last5_start = current_year - 5
+            last2_start = current_year - 2
+            years_last5 = set()
+            years_last2 = set()
+            for s,e in intervals:
+                for y in range(s, e+1):
+                    if y >= last5_start:
+                        years_last5.add(y)
+                    if y >= last2_start:
+                        years_last2.add(y)
+            coverage5 = len(years_last5) / 6.0  # 0..1 approx (6 year span inclusive)
+            coverage2 = len(years_last2) / 3.0
+            recency = any(e >= current_year-1 for _,e in intervals)
+            base = 1.0 + 0.08*min(1.0, coverage5) + 0.05*min(1.0, coverage2)
+            if recency:
+                base += 0.02
+            return float(max(0.9, min(1.15, base)))
+        except Exception:
+            return 1.0
 
     def _augment_with_job_descriptions(self, folder: Path) -> None:
         """Enrich position intelligence with keywords extracted from job description PDF/TXT files.
@@ -5198,10 +5583,12 @@ class EnhancedHotelAIScreener:
     def enhanced_skill_extraction(self, text: str, position: str) -> Dict[str, Any]:
         """Enhanced skill extraction using semantic matching and NLP."""
         skills_found = set()
-        confidence_scores = {}
-        
+        confidence_scores: Dict[str, float] = {}
+        alias_expansions: List[Dict[str, Any]] = []
+        alias_details: Dict[str, List[str]] = {}
+
         text_lower = text.lower()
-        
+
         # Get position requirements
         position_data = self.position_intelligence.get(position, {})
         all_required_skills = (
@@ -5210,51 +5597,72 @@ class EnhancedHotelAIScreener:
             position_data.get("technical_skills", []) +
             position_data.get("soft_skills", [])
         )
-        
-        # Direct skill matching with context
+
+        # Build reverse alias index for fast lookup
+        reverse_alias: Dict[str, str] = {}
+        for canonical, variants in SKILL_ALIASES.items():  # type: ignore
+            for variant in variants:
+                reverse_alias[variant.lower()] = canonical
+
+        # Direct skill matching with context + alias normalization
         for skill in all_required_skills:
             skill_lower = skill.lower()
             if skill_lower in text_lower:
                 skills_found.add(skill)
                 confidence_scores[skill] = 1.0
-                
-                # Check for context indicators
                 context_indicators = [
                     "experience with", "skilled in", "proficient in", "expert in",
                     "knowledge of", "familiar with", "certified in", "trained in"
                 ]
-                
                 for indicator in context_indicators:
                     if f"{indicator} {skill_lower}" in text_lower:
                         confidence_scores[skill] = min(confidence_scores[skill] + 0.2, 1.0)
-        
+
+        # Alias-based detection: find alias variants even if canonical not explicitly listed
+        for variant, canonical in reverse_alias.items():
+            if variant in text_lower:
+                matching_required = next((s for s in all_required_skills if s.lower() == canonical.lower()), None)
+                canonical_key = matching_required or canonical
+                if canonical_key not in skills_found:
+                    skills_found.add(canonical_key)
+                    confidence_scores[canonical_key] = 0.75
+                    alias_details.setdefault(canonical_key, []).append(variant)
+                    alias_expansions.append({
+                        "canonical": canonical_key,
+                        "matched_variant": variant,
+                        "confidence": 0.75
+                    })
+                else:
+                    if confidence_scores.get(canonical_key, 0) < 0.9:
+                        confidence_scores[canonical_key] = min(0.9, confidence_scores.get(canonical_key, 0) + 0.05)
+                    alias_details.setdefault(canonical_key, []).append(variant)
+
         # Semantic skill matching using taxonomy
         for category, related_skills in self.skill_taxonomy.items():
             for skill in related_skills:
                 if skill.lower() in text_lower and skill not in skills_found:
-                    # Find the best matching required skill
                     for req_skill in all_required_skills:
                         if any(term in req_skill.lower() for term in skill.lower().split()):
                             skills_found.add(req_skill)
                             confidence_scores[req_skill] = 0.8
                             break
-        
+
         # Advanced NLP-based extraction if spaCy available
         if spacy_available and nlp:
             doc = nlp(text)
-            
-            # Extract skills from noun phrases
             for chunk in doc.noun_chunks:
                 chunk_text = chunk.text.lower()
                 for skill in all_required_skills:
                     if skill.lower() in chunk_text and skill not in skills_found:
                         skills_found.add(skill)
                         confidence_scores[skill] = 0.7
-        
+
         return {
             "skills": list(skills_found),
             "confidence_scores": confidence_scores,
-            "total_skills_found": len(skills_found)
+            "total_skills_found": len(skills_found),
+            "alias_expansions": alias_expansions,
+            "alias_details": alias_details
         }
     
     def advanced_experience_analysis(self, text: str, position: str) -> Dict[str, Any]:
@@ -5268,7 +5676,9 @@ class EnhancedHotelAIScreener:
             "leadership_experience": False,
             "training_experience": False,
             "certifications": [],
-            "education_level": "Unknown"
+            "education_level": "Unknown",
+            "normalized_titles": [],
+            "raw_title_hits": []
         }
         
         text_lower = text.lower()
@@ -5290,12 +5700,35 @@ class EnhancedHotelAIScreener:
         if years_found:
             analysis["total_years"] = max(years_found)
         
-        # Check for direct experience
+        # Title normalization pass
+        raw_hits = []
+        normalized = set()
+        for canonical, variants in ROLE_ONTOLOGY.items():
+            all_forms = {canonical} | set(variants)
+            for form in all_forms:
+                if form in text_lower:
+                    raw_hits.append(form)
+                    normalized.add(canonical)
+        analysis["raw_title_hits"] = sorted(set(raw_hits))
+        analysis["normalized_titles"] = sorted(normalized)
+
+        # Check for direct experience via indicators or normalized match
         experience_indicators = position_data.get("experience_indicators", [])
+        direct = False
         for indicator in experience_indicators:
             if indicator.lower() in text_lower:
-                analysis["has_direct_experience"] = True
+                direct = True
                 break
+        # If searched position maps into ontology
+        pos_lower = position.lower()
+        for canonical, variants in ROLE_ONTOLOGY.items():
+            if pos_lower == canonical or pos_lower in variants:
+                if canonical in normalized:
+                    direct = True
+                    break
+        if direct:
+            analysis["has_direct_experience"] = True
+            analysis["relevant_years"] = max(analysis["relevant_years"], analysis["total_years"])  # heuristic
         
         # Check for leadership experience
         leadership_terms = [
@@ -5356,6 +5789,7 @@ class EnhancedHotelAIScreener:
         jd_bonus_skills = 0.0
         jd_similarity = None
         matched_jd_terms: List[str] = []
+        emb_similarity = None
         if jd_keywords:
             try:
                 resume_tokens = set(re.findall(r"\b[a-z]{3,}\b", resume_text))
@@ -5363,13 +5797,29 @@ class EnhancedHotelAIScreener:
                 matched_jd_terms = sorted(list(kw_set.intersection(resume_tokens)))
                 if matched_jd_terms:
                     coverage = len(matched_jd_terms) / (len(kw_set) + 1e-6)
-                    total_bonus = min(0.10, coverage * 0.10)  # cap 0.10
+                    total_bonus = min(0.10, coverage * 0.10)
                     jd_bonus_experience = total_bonus * 0.6
                     jd_bonus_skills = total_bonus * 0.4
             except Exception:
                 pass
 
-            # TF-IDF similarity bonus (requires sklearn)
+            # Embedding similarity (optional)
+            try:
+                jd_raw = ""
+                if hasattr(self, "_jd_raw_texts"):
+                    jd_raw = self._jd_raw_texts.get(position) or ""  # type: ignore
+                if jd_raw and len(jd_raw) > 60:
+                    jd_vec = self._embed_text(jd_raw[:5000])
+                    res_vec = self._embed_text(candidate.get("resume_text", "")[:5000])
+                    if jd_vec and res_vec:
+                        emb_similarity = self._embedding_cosine(jd_vec, res_vec)
+                        emb_bonus = min(0.04, (emb_similarity or 0) * 0.04)
+                        jd_bonus_experience += emb_bonus * 0.5
+                        jd_bonus_skills += emb_bonus * 0.5
+            except Exception:
+                pass
+
+            # TF-IDF similarity bonus
             try:
                 from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
                 from sklearn.metrics.pairwise import cosine_similarity  # type: ignore
@@ -5381,7 +5831,6 @@ class EnhancedHotelAIScreener:
                         tfidf = vectorizer.fit_transform(docs)
                         sim = cosine_similarity(tfidf[0:1], tfidf[1:2])[0][0]
                         jd_similarity = float(sim)
-                        # similarity contributes up to additional 0.05 split evenly
                         sim_bonus = min(0.05, sim * 0.05)
                         jd_bonus_experience += sim_bonus * 0.5
                         jd_bonus_skills += sim_bonus * 0.5
@@ -5486,13 +5935,19 @@ class EnhancedHotelAIScreener:
         if progression_found > 0:
             experience_score += 0.05 * min(progression_found, 2)
 
-        # Apply JD experience bonus before capping
+        # Apply JD experience bonus
         experience_score += jd_bonus_experience
+        # Temporal weighting multiplier
+        temporal_multiplier = 1.0
+        if candidate.get("timeline"):
+            temporal_multiplier = self._temporal_experience_weight(candidate.get("timeline"))
+            experience_score *= temporal_multiplier
         scores["experience_relevance"] = min(experience_score, 1.0)
         breakdown["experience"] = {
             "score": scores["experience_relevance"],
             "relevant_positions": relevant_exp_count,
             "total_years": total_experience_years,
+            "temporal_multiplier": round(temporal_multiplier,4),
             "meets_minimum": total_experience_years >= min_years,
             "leadership_indicators": leadership_found,
             "progression_indicators": progression_found
@@ -5562,6 +6017,23 @@ class EnhancedHotelAIScreener:
             "coverage_ratio": total_skills_found / max(total_skills_available, 1)
         }
 
+        # Minor canonical alias coverage bonus (max +0.02 to skills score, applied before final weighting cap)
+        try:
+            extracted = candidate.get("skills_extraction") or {}
+            alias_details = extracted.get("alias_details") or {}
+            # If multiple distinct canonical groups hit via aliases, add tiny boost
+            distinct_alias_groups = len([k for k,v in alias_details.items() if v])
+            if distinct_alias_groups >= 3:
+                scores["skills_match"] = min(1.0, scores["skills_match"] + 0.02)
+                breakdown.setdefault("skills", {})["alias_coverage_bonus"] = 0.02
+            elif distinct_alias_groups == 2:
+                scores["skills_match"] = min(1.0, scores["skills_match"] + 0.01)
+                breakdown.setdefault("skills", {})["alias_coverage_bonus"] = 0.01
+            if alias_details:
+                breakdown.setdefault("skills", {})["alias_details"] = alias_details
+        except Exception:
+            pass
+
         # Job description enrichment breakdown
         breakdown["job_description"] = {
             "keywords_defined": bool(jd_keywords),
@@ -5569,7 +6041,8 @@ class EnhancedHotelAIScreener:
             "matched_keywords": matched_jd_terms,
             "experience_bonus": round(jd_bonus_experience, 4),
             "skills_bonus": round(jd_bonus_skills, 4),
-            "similarity": round(jd_similarity, 4) if jd_similarity is not None else None
+            "similarity": round(jd_similarity, 4) if jd_similarity is not None else None,
+            "embedding_similarity": round(emb_similarity,4) if emb_similarity is not None else None
         }
         
         # 3. EDUCATION & CERTIFICATION ANALYSIS (15% weight)
@@ -5653,9 +6126,26 @@ class EnhancedHotelAIScreener:
         
         # Professional language and achievements
         professional_terms = ["responsible for", "achieved", "managed", "developed", "implemented", "improved", 
-                             "coordinated", "supervised", "led", "organized", "maintained"]
+                             "coordinated", "supervised", "led", "organized", "maintained", "increased", "reduced", "optimized", "accelerated"]
         professional_found = sum(1 for term in professional_terms if term in resume_text)
         comm_score += min(professional_found * 0.05, 0.4)
+
+        # Action verb richness (distinct strong verbs)
+        action_verbs = {"led","managed","coordinated","developed","implemented","improved","optimized","achieved","increased","reduced","designed","launched","trained","supervised","streamlined","analyzed"}
+        used_verbs = set()
+        for v in action_verbs:
+            if v in resume_text:
+                used_verbs.add(v)
+        richness = len(used_verbs)
+        verb_bonus = min(0.15, richness * 0.02)  # up to 0.15
+        comm_score += verb_bonus
+
+        # Quantified accomplishments (numbers with %, $, +, or k)
+        quant_pattern = re.compile(r"(\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\s*(?:%|percent|usd|\$|k|\/yr)?|\b\d+\+\b)")
+        quant_hits = quant_pattern.findall(resume_text)
+        quant_count = len(quant_hits)
+        quant_bonus = min(0.15, quant_count * 0.015)
+        comm_score += quant_bonus
         
         # Language skills (bonus for hospitality)
         language_terms = ["bilingual", "multilingual", "spanish", "french", "languages", "fluent"]
@@ -5667,10 +6157,14 @@ class EnhancedHotelAIScreener:
             "score": scores["communication_quality"],
             "resume_length": len(resume_text),
             "professional_terms": professional_found,
-            "multilingual": any(term in resume_text for term in language_terms)
+            "multilingual": any(term in resume_text for term in language_terms),
+            "action_verb_richness": richness,
+            "action_verb_bonus": round(verb_bonus,4),
+            "quantified_achievements": quant_count,
+            "quantified_bonus": round(quant_bonus,4)
         }
         
-        # 6. POSITION-SPECIFIC INTELLIGENCE (5% weight)
+    # 6. POSITION-SPECIFIC INTELLIGENCE (5% weight)
         position_score = 0.0
         
         # Direct position title matching with variations
@@ -5702,6 +6196,57 @@ class EnhancedHotelAIScreener:
             "industry_terms": industry_found
         }
         
+        # Establish weights early (can be referenced by plugins)
+        weights = {
+            "experience_relevance": 0.35,
+            "skills_match": 0.30,
+            "education_fit": 0.15,
+            "cultural_alignment": 0.10,
+            "communication_quality": 0.05,
+            "position_specific": 0.05
+        }
+        # Apply overrides from config if present
+        weights = self._apply_scoring_overrides(weights)
+
+        # Plugin hook: allow external modules to tweak category scores pre-penalty
+        plugin_reports: List[Dict[str, Any]] = []
+        try:
+            hooks = self._load_plugins()
+            if hooks:
+                for h in hooks:
+                    try:
+                        ctx = {
+                            "position": position,
+                            "candidate": candidate,
+                            "scores": dict(scores),
+                            "breakdown": breakdown,
+                            "weights": dict(weights),
+                            "version": SCORING_VERSION,
+                        }
+                        res = h["fn"](ctx)
+                        if isinstance(res, dict):
+                            deltas = res.get("category_deltas") or {}
+                            # Apply deltas safely
+                            for k, dv in deltas.items():
+                                if k in scores and isinstance(dv, (int, float)):
+                                    scores[k] = float(max(0.0, min(1.0, scores[k] + float(dv))))
+                            report = {
+                                "id": res.get("id") or h.get("id"),
+                                "applied_deltas": {k: float(deltas[k]) for k in deltas.keys() if k in scores},
+                                "notes": res.get("notes"),
+                            }
+                            # Optional post bonus (to be applied after penalties later)
+                            post_bonus = res.get("post_bonus")
+                            if isinstance(post_bonus, (int, float)):
+                                report["post_bonus"] = float(post_bonus)
+                            if res.get("details") is not None:
+                                report["details"] = res.get("details")
+                            plugin_reports.append(report)
+                    except Exception as pe:
+                        plugin_reports.append({"id": h.get("id"), "error": str(pe)})
+        except Exception:
+            pass
+
         # CHECK FOR DISQUALIFYING FACTORS
         disqualification_penalty = 0.0
         disqualified_reasons = []
@@ -5712,17 +6257,43 @@ class EnhancedHotelAIScreener:
                 disqualified_reasons.append(factor)
         
         # CALCULATE FINAL WEIGHTED SCORE
-        weights = {
-            "experience_relevance": 0.35,
-            "skills_match": 0.30,
-            "education_fit": 0.15,
-            "cultural_alignment": 0.10,
-            "communication_quality": 0.05,
-            "position_specific": 0.05
-        }
-        
+
+        # Negative domain penalty (soft) – penalize unrelated industry/domain references
+        neg_hits = sum(1 for term in NEGATIVE_DOMAIN_TERMS if term in resume_text)
+        neg_penalty = min(0.15, neg_hits * 0.04) if neg_hits else 0.0
+
         total_score = sum(scores[key] * weights[key] for key in weights.keys())
-        total_score = max(0.0, total_score - disqualification_penalty)
+        # Content quality soft penalty
+        content_quality = candidate.get("content_quality") or {}
+        content_penalty = 0.0
+        if content_quality.get("low_information"):
+            content_penalty += 0.04
+        elif content_quality.get("length_flag") and content_quality.get("diversity_flag"):
+            content_penalty += 0.02
+        total_score = max(0.0, total_score - disqualification_penalty - neg_penalty - content_penalty)
+
+        # Apply any plugin post bonuses after penalties
+        if plugin_reports:
+            post_total_bonus = 0.0
+            for pr in plugin_reports:
+                b = pr.get("post_bonus")
+                if isinstance(b, (int, float)):
+                    post_total_bonus += float(b)
+            if post_total_bonus:
+                total_score = float(max(0.0, min(1.0, total_score + post_total_bonus)))
+
+        # Record penalties & weights for transparency
+        breakdown["penalties"] = {
+            "disqualification_penalty": round(disqualification_penalty, 4),
+            "negative_domain_penalty": round(neg_penalty, 4),
+            "negative_domain_hits": neg_hits,
+            "content_penalty": round(content_penalty, 4)
+        }
+        breakdown["weights_used"] = weights
+        if content_quality:
+            breakdown["content_quality"] = content_quality
+        if plugin_reports:
+            breakdown["plugins"] = plugin_reports
         
         # INTELLIGENT RECOMMENDATIONS
         if total_score >= 0.85:
@@ -5751,6 +6322,60 @@ class EnhancedHotelAIScreener:
             "cultural_fit": scores["cultural_alignment"],
             "hospitality": (scores["experience_relevance"] + scores["cultural_alignment"]) / 2
         }
+        # Optional explanation (lightweight) embedded in breakdown
+        if self._explain_mode or candidate.get("explain"):
+            weights_used = breakdown.get("weights_used", {})
+            contributions = {}
+            for k, v in scores.items():
+                w = weights_used.get(k, 0.0)
+                contributions[k] = {
+                    "raw_score": round(v, 4),
+                    "weight": round(w, 4),
+                    "weighted": round(v * w, 4)
+                }
+            breakdown["explanation"] = {
+                "contributions": contributions,
+                "jd": {
+                    "matched_terms": matched_jd_terms,
+                    "similarity_tfidf": jd_similarity,
+                    "similarity_embedding": emb_similarity,
+                    "bonus_experience": round(jd_bonus_experience, 4),
+                    "bonus_skills": round(jd_bonus_skills, 4)
+                },
+                "experience_temporal_multiplier": breakdown.get("experience", {}).get("temporal_multiplier"),
+                "communication": {
+                    "action_verb_richness": breakdown.get("communication", {}).get("action_verb_richness"),
+                    "action_verb_bonus": breakdown.get("communication", {}).get("action_verb_bonus"),
+                    "quantified_achievements": breakdown.get("communication", {}).get("quantified_achievements"),
+                    "quantified_bonus": breakdown.get("communication", {}).get("quantified_bonus"),
+                },
+                "alias_coverage_bonus": breakdown.get("skills_match", {}).get("alias_coverage_bonus"),
+                "penalties": breakdown.get("penalties"),
+                "scoring_version": SCORING_VERSION
+            }
+            if self._debug_emb:
+                breakdown["explanation"]["_embedding_debug"] = {
+                    "has_model": bool(self._embedding_model),
+                    "cache_size": len(self._embed_cache)
+                }
+            if plugin_reports:
+                breakdown["explanation"]["plugins"] = plugin_reports
+
+        # Benchmarks: compute percentiles vs. history and attach to breakdown
+        try:
+            samples = self._read_score_samples()
+            global_vals = [float(s.get("score", 0.0)) for s in samples]
+            role_vals = [float(s.get("score", 0.0)) for s in samples if s.get("position") == position]
+            gp = self._percentile(global_vals, total_score)
+            rp = self._percentile(role_vals, total_score)
+            breakdown["benchmark"] = {
+                "samples_global": len(global_vals),
+                "samples_role": len(role_vals),
+                "percentile_global": gp,
+                "percentile_role": rp,
+            }
+        except Exception:
+            pass
         
         return {
             "total_score": total_score,
@@ -5760,8 +6385,10 @@ class EnhancedHotelAIScreener:
             "detailed_scores": scores,
             "breakdown": breakdown,
             "disqualified_reasons": disqualified_reasons,
+            "negative_domain_hits": neg_hits,
             "position": position,
-            "scoring_methodology": "Enhanced AI Analysis v3.0 - Deep Content Analysis"
+            "scoring_methodology": f"Enhanced AI Analysis v{SCORING_VERSION} - Deep Content Analysis",
+            "evidence": candidate.get("evidence")
         }
     
     def process_single_resume(self, file_path: Path, position: str) -> Dict[str, Any]:
@@ -5774,57 +6401,72 @@ class EnhancedHotelAIScreener:
             if not text or len(text.strip()) < 50:
                 logger.warning(f"⚠️ Insufficient text extracted from {file_path.name}")
                 return None
+
+            # Duplicate detection (hash of normalized text)
+            norm_for_hash = re.sub(r"\s+", " ", text.lower()).strip()
+            file_hash = hashlib.md5(norm_for_hash.encode('utf-8')).hexdigest()
+            if file_hash in self._seen_hashes:
+                logger.info(f"♻️ Duplicate resume detected (skipping): {file_path.name}")
+                return None
+            self._seen_hashes.add(file_hash)
             
             # Extract basic information
             candidate_info = self._extract_candidate_info(text)
-            
-            # Enhanced skill analysis
+            sections = self._segment_resume_sections(text)
             skill_analysis = self.enhanced_skill_extraction(text, position)
-            
-            # Advanced experience analysis
             experience_analysis = self.advanced_experience_analysis(text, position)
-            
-            # Calculate enhanced score
+            timeline = self._analyze_career_timeline(text)
+            position_data = self.position_intelligence.get(position, {})
+
+            # Content sufficiency assessment
+            content_quality = self._assess_content_sufficiency(text, sections)
+
+            # Vocabulary gap update (non-fatal)
+            try:
+                self._update_vocabulary_gap(text)
+            except Exception:
+                pass
+
+            # Evidence snippets (non-fatal if fails)
+            try:
+                evidence = self._collect_evidence_snippets(text, position_data)
+            except Exception:
+                evidence = None
+
             candidate_data = {
                 "resume_text": text,
                 "skill_analysis": skill_analysis,
                 "experience_analysis": experience_analysis,
+                "sections": sections,
+                "timeline": timeline,
+                "evidence": evidence,
+                "content_quality": content_quality,
                 **candidate_info
             }
-            
+
             # Detect gender
             gender_info = self._detect_gender(text, candidate_info.get("name", "Unknown"))
             
             scoring_result = self.calculate_enhanced_score(candidate_data, position)
 
+            # Append score to history log and refresh benchmark in result (non-fatal on error)
+            try:
+                self._append_score_sample(position, scoring_result.get("total_score", 0.0))
+            except Exception:
+                pass
+
             # Detect explicit role evidence (title or training/certification for the searched position)
             role_evidence_details = self._detect_explicit_role_evidence(text, position)
             
-            # Compile final result
-            result = {
-                "file_name": file_path.name,
-                "candidate_name": candidate_info.get("name", "Unknown"),
-                "email": candidate_info.get("email", "Not found"),
-                "phone": candidate_info.get("phone", "Not found"),
-                "location": candidate_info.get("location", "Not specified"),
-                "gender": gender_info["gender"],
-                "gender_confidence": gender_info["confidence"],
-                "gender_indicators": gender_info["indicators"],
-                "total_score": scoring_result["total_score"],
-                "recommendation": scoring_result["recommendation"],
-                "category_scores": scoring_result["category_scores"],
-                "breakdown": scoring_result["breakdown"],
-                "skills_found": skill_analysis["skills"],
-                "experience_years": experience_analysis["total_years"],
-                "experience_quality": experience_analysis["experience_quality"],
-                # Strict-role-match support
+            # Merge scoring_result with extra metadata
+            scoring_result.update({
+                "sections_detected": list(sections.keys()),
                 "explicit_role_evidence": role_evidence_details.get("has_evidence", False),
                 "role_evidence_details": role_evidence_details,
-                "processed_at": datetime.now().isoformat()
-            }
-            
-            logger.info(f"✅ {file_path.name}: {result['total_score']:.1%} - {result['recommendation']}")
-            return result
+                "processed_at": datetime.now().isoformat(),
+            })
+            logger.info(f"✅ {file_path.name}: {scoring_result['total_score']:.1%} - {scoring_result['recommendation']}")
+            return scoring_result
             
         except Exception as e:
             logger.error(f"❌ Error processing {file_path.name}: {e}")
@@ -5925,7 +6567,6 @@ class EnhancedHotelAIScreener:
                 "certification_hits": sorted(set(certification_hits)),
             }
         except Exception:
-            # Never break the pipeline on detection errors
             return {
                 "has_evidence": False,
                 "exact_title_match": False,
@@ -5933,63 +6574,160 @@ class EnhancedHotelAIScreener:
                 "training_hits": [],
                 "certification_hits": [],
             }
+
+    def _collect_evidence_snippets(self, resume_text: str, position_data: Dict[str, Any], max_per_cat: int = 5) -> Dict[str, List[Dict[str, Any]]]:
+        """Collect concise evidence snippets to justify scoring decisions.
+
+        Returns dict categories: experience, skills, job_description
+        Each item: {term, snippet, count}
+        """
+        lines = [ln.strip() for ln in re.split(r"[\r\n]+", resume_text) if ln.strip()]
+        lowered = [l.lower() for l in lines]
+        evidence: Dict[str, List[Dict[str, Any]]] = {"experience": [], "skills": [], "job_description": []}
+
+        def add(cat: str, term: str, idx: int):
+            if len(evidence[cat]) >= max_per_cat:
+                return
+            l = lines[idx]
+            evidence[cat].append({
+                "term": term,
+                "snippet": l[:240],
+                "count": lowered[idx].count(term.lower())
+            })
+
+        for term in position_data.get("experience_indicators", [])[:40]:
+            t = term.lower()
+            for i, l in enumerate(lowered):
+                if t in l:
+                    add("experience", term, i)
+                    break
+
+        skill_terms = position_data.get("must_have_skills", []) + position_data.get("technical_skills", [])
+        seen = set()
+        for term in skill_terms[:60]:
+            t = term.lower()
+            for i, l in enumerate(lowered):
+                if t in l and term not in seen:
+                    add("skills", term, i)
+                    seen.add(term)
+                    break
+
+        for term in (position_data.get("job_description_keywords", []) or [])[:60]:
+            t = term.lower()
+            for i, l in enumerate(lowered):
+                if t in l:
+                    add("job_description", term, i)
+                    break
+
+        return evidence
+
+    def _update_vocabulary_gap(self, text: str, min_freq: int = 2) -> None:
+        """Track uncommon tokens to surface emerging terminology.
+
+        Maintains a JSON file 'vocabulary_gap.json' accumulating counts
+        of tokens not in a basic hospitality seed list. Lightweight and
+        tolerant to failures.
+        """
+        seed = getattr(self, "_seed_vocab", None)
+        if seed is None:
+            self._seed_vocab = seed = set([
+                "hotel","resort","guest","service","customer","experience","manager","team","food","beverage",
+                "kitchen","housekeeping","front","desk","hospitality","cleaning","maintenance","chef","cook","server",
+                "bar","restaurant","safety","training","skills","communication","supervisor","leader","operation"
+            ])
+        tokens = [t.lower() for t in re.findall(r"[A-Za-z]{3,}", text)]
+        counts: Dict[str,int] = {}
+        for t in tokens:
+            if t not in seed and len(t) < 24:
+                counts[t] = counts.get(t,0)+1
+        gap = {k:v for k,v in counts.items() if v >= min_freq}
+        if not gap:
+            return
+        vocab_path = Path("vocabulary_gap.json")
+        existing: Dict[str,int] = {}
+        try:
+            if vocab_path.exists():
+                existing = json.loads(vocab_path.read_text(encoding="utf-8"))
+        except Exception:
+            existing = {}
+        for k,v in gap.items():
+            existing[k] = existing.get(k,0)+v
+        try:
+            vocab_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        except Exception:
+            pass
     
     def _extract_text_from_file(self, file_path: Path) -> str:
-        """Extract text from various file formats."""
-        text = ""
+        """Robust multi-engine text extraction with fallbacks and minimal reconciliation."""
         file_ext = file_path.suffix.lower()
-        
+        primary_text = ""
+        alt_text = ""
+        ocr_text = ""
         try:
             if file_ext == '.txt':
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    text = f.read()
-            
-            elif file_ext == '.pdf':
-                if ocr_available:
-                    try:
-                        # Try text extraction first
-                        import PyPDF2
-                        with open(file_path, 'rb') as f:
-                            reader = PyPDF2.PdfReader(f)
-                            for page in reader.pages:
-                                text += page.extract_text() + "\n"
-                        
-                        # If text extraction failed, use OCR
-                        if len(text.strip()) < 50:
-                            pages = pdf2image.convert_from_path(file_path)
-                            for page in pages:
-                                text += pytesseract.image_to_string(page) + "\n"
-                    except:
-                        logger.warning(f"PDF processing failed for {file_path.name}")
-                        return ""
-                else:
-                    logger.warning(f"PDF support not available for {file_path.name}")
+                try:
+                    primary_text = file_path.read_text(encoding='utf-8', errors='ignore')
+                except Exception:
                     return ""
-            
+            elif file_ext == '.pdf':
+                # Engine 1: PyPDF2
+                try:
+                    import PyPDF2
+                    with open(file_path, 'rb') as f:
+                        reader = PyPDF2.PdfReader(f)
+                        for page in reader.pages:
+                            extracted = page.extract_text() or ""
+                            primary_text += extracted + "\n"
+                except Exception:
+                    pass
+                # Engine 2: pdfminer.six if weak
+                if len(primary_text.strip()) < 40:
+                    try:
+                        from pdfminer.high_level import extract_text as pdfminer_extract
+                        alt_text = pdfminer_extract(str(file_path)) or ""
+                    except Exception:
+                        alt_text = ""
+                # Engine 3: OCR fallback
+                if ocr_available and len(primary_text.strip() + alt_text.strip()) < 40:
+                    try:
+                        pages = pdf2image.convert_from_path(file_path)
+                        for pg in pages[:8]:
+                            try:
+                                ocr_text += pytesseract.image_to_string(pg) + "\n"
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
             elif file_ext in ['.docx', '.doc']:
                 try:
                     import docx
                     doc = docx.Document(file_path)
-                    for paragraph in doc.paragraphs:
-                        text += paragraph.text + "\n"
-                except:
-                    logger.warning(f"DOCX processing failed for {file_path.name}")
+                    for p in doc.paragraphs:
+                        primary_text += p.text + "\n"
+                except Exception:
+                    primary_text = ""
+            elif file_ext in ['.jpg', '.jpeg', '.png', '.tiff', '.bmp'] and ocr_available:
+                try:
+                    image = Image.open(file_path)
+                    ocr_text = pytesseract.image_to_string(image)
+                except Exception:
                     return ""
-            
-            elif file_ext in ['.jpg', '.jpeg', '.png', '.tiff', '.bmp']:
-                if ocr_available:
-                    try:
-                        image = Image.open(file_path)
-                        text = pytesseract.image_to_string(image)
-                    except:
-                        logger.warning(f"Image OCR failed for {file_path.name}")
-                        return ""
-                else:
-                    logger.warning(f"OCR not available for {file_path.name}")
-                    return ""
-            
-            return text.strip()
-            
+            else:
+                # Unsupported type short-circuit
+                return ""
+
+            # Reconcile: pick longest non-empty; merge unique lines if OCR adds data
+            candidates = [t for t in [primary_text, alt_text, ocr_text] if t and len(t.strip()) > 0]
+            if not candidates:
+                return ""
+            base = max(candidates, key=lambda x: len(x))
+            if ocr_text and ocr_text not in base and len(ocr_text) > 40:
+                # append lines not already present
+                base_lines = set(base.splitlines())
+                new_lines = [ln for ln in ocr_text.splitlines() if ln not in base_lines]
+                if new_lines:
+                    base += "\n" + "\n".join(new_lines)
+            return base.strip()
         except Exception as e:
             logger.error(f"Text extraction failed for {file_path.name}: {e}")
             return ""
