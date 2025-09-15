@@ -645,35 +645,59 @@ def main() -> None:
         # Non-fatal: if any state not available yet, ignore
         pass
     
-    # File upload section
-    st.subheader("📂 Upload Resume Files")
-    
-    uploaded_files = st.file_uploader(
-        "Choose resume files",
-        type=['pdf', 'docx', 'doc', 'txt', 'jpg', 'jpeg', 'png'],
-        accept_multiple_files=True,
-        help="Upload resumes in PDF, Word, text, or image format"
-    )
-    
-    if uploaded_files:
-        st.success(f"✅ {len(uploaded_files)} files uploaded successfully!")
-        
-        # Show uploaded files
-        with st.expander("📋 Uploaded Files"):
-            for file in uploaded_files:
-                st.write(f"• {file.name} ({file.size:,} bytes)")
-    
+    # Source selection: Upload vs Folder
+    st.subheader("📂 Source of Resume Files")
+    source_mode = st.radio("Select source:", ["Upload", "Folder"], horizontal=True)
+
+    uploaded_files = []
+    folder_path = Path("input_resumes")
+    if source_mode == "Upload":
+        uploaded_files = st.file_uploader(
+            "Choose resume files",
+            type=['pdf', 'docx', 'doc', 'txt', 'jpg', 'jpeg', 'png'],
+            accept_multiple_files=True,
+            help="Upload resumes in PDF, Word, text, or image format"
+        )
+        if uploaded_files:
+            st.success(f"✅ {len(uploaded_files)} files uploaded successfully!")
+            with st.expander("📋 Uploaded Files"):
+                for file in uploaded_files:
+                    st.write(f"• {file.name} ({file.size:,} bytes)")
+    else:
+        st.caption("Using files directly from the input folder.")
+        colf1, colf2, colf3 = st.columns([3,1,2])
+        with colf1:
+            folder_path = Path(st.text_input("Folder path", value=str(folder_path)))
+        with colf2:
+            if st.button("🔄 Refresh"):
+                st.rerun()
+        with colf3:
+            auto_refresh = st.checkbox("Auto-refresh UI", value=False, help="Auto-refresh this page to pick up new files")
+            interval = st.number_input("Every (sec)", min_value=5, max_value=120, value=15, step=5)
+        try:
+            files_in_folder = [p for p in folder_path.glob("*.*") if p.suffix.lower() in (".pdf",".doc",".docx",".txt",".jpg",".jpeg",".png")]
+            st.info(f"📂 {len(files_in_folder)} files in {folder_path}")
+            st.caption(f"Last scan: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            if auto_refresh and interval:
+                # Inject meta refresh to trigger rerun on an interval
+                st.markdown(f"<meta http-equiv='refresh' content='{int(interval)}'>", unsafe_allow_html=True)
+        except Exception as e:
+            st.warning(f"Folder not accessible: {e}")
+
     # Processing section
     col1, col2, col3 = st.columns(3)
-    
     with col2:
-        if st.button("🚀 Start Screening", disabled=not uploaded_files or not selected_position):
-            if uploaded_files and selected_position:
+        trigger = st.button("🚀 Start Screening")
+    
+    if trigger:
+        if source_mode == "Upload":
+            if not (uploaded_files and selected_position):
+                st.warning("Please upload files and choose a position.")
+            else:
                 with st.spinner("🔍 Processing resumes... This may take a few minutes."):
                     try:
                         # Save files temporarily
                         temp_dir, saved_files = save_uploaded_files(uploaded_files)
-                        
                         # Initialize screener
                         if enhanced_available and EnhancedHotelAIScreener is not None:
                             screener = EnhancedHotelAIScreener(str(temp_dir))
@@ -681,14 +705,12 @@ def main() -> None:
                             screener = HotelAIScreener(str(temp_dir))
                         else:
                             raise RuntimeError("No screener class available")
-                        
                         # Process candidates
                         results = screener.screen_candidates(
                             selected_position,
                             max_candidates,
                             require_explicit_role=st.session_state.get("strict_role_match", True),
                         )
-
                         # Enforce strict role evidence if enabled and available
                         if st.session_state.get("strict_role_match", True):
                             if results and all("explicit_role_evidence" in r for r in results):
@@ -696,17 +718,11 @@ def main() -> None:
                                 results = [r for r in results if r.get("explicit_role_evidence", False)]
                                 removed_ct = before_ct - len(results)
                                 if removed_ct > 0:
-                                    st.info(
-                                        f"Filtered out {removed_ct} candidate(s) without explicit role/title/training evidence.")
+                                    st.info(f"Filtered out {removed_ct} candidate(s) without explicit role/title/training evidence.")
                             else:
-                                st.warning(
-                                    "Strict role match is enabled, but this engine didn't return role-evidence flags. "
-                                    "Results are shown without strict filtering."
-                                )
-                        
+                                st.warning("Strict role match is enabled, but this engine didn't return role-evidence flags. Results are shown without strict filtering.")
                         # Filter by score threshold
                         results = [r for r in results if r['total_score'] >= score_threshold]
-                        
                         # Filter by gender if specified
                         if gender_filter != "All":
                             include_unknown = st.session_state.get("include_unknown_gender", False)
@@ -714,20 +730,53 @@ def main() -> None:
                                 r for r in results
                                 if r.get('gender', 'Unknown') == gender_filter or (include_unknown and r.get('gender', 'Unknown') == 'Unknown')
                             ]
-                        
                         st.session_state.screening_results = results
-                        # Reset pagination on new results
                         st.session_state['page'] = 1
-                        
                         # Clean up temporary files
                         import shutil
                         shutil.rmtree(temp_dir)
-                        
                         st.success(f"✅ Screening complete! Found {len(results)} qualified candidates.")
-                        
                     except Exception as e:
                         st.error(f"❌ Error during processing: {str(e)}")
                         st.error("Please check your files and try again.")
+        else:
+            if not selected_position:
+                st.warning("Please select a position.")
+            else:
+                with st.spinner("🔍 Scanning folder and processing resumes..."):
+                    try:
+                        if enhanced_available and EnhancedHotelAIScreener is not None:
+                            screener = EnhancedHotelAIScreener(str(folder_path))
+                        elif HotelAIScreener is not None:
+                            screener = HotelAIScreener(str(folder_path))
+                        else:
+                            raise RuntimeError("No screener class available")
+                        results = screener.screen_candidates(
+                            selected_position,
+                            max_candidates,
+                            require_explicit_role=st.session_state.get("strict_role_match", True),
+                        )
+                        if st.session_state.get("strict_role_match", True):
+                            if results and all("explicit_role_evidence" in r for r in results):
+                                before_ct = len(results)
+                                results = [r for r in results if r.get("explicit_role_evidence", False)]
+                                removed_ct = before_ct - len(results)
+                                if removed_ct > 0:
+                                    st.info(f"Filtered out {removed_ct} candidate(s) without explicit role/title/training evidence.")
+                            else:
+                                st.warning("Strict role match is enabled, but this engine didn't return role-evidence flags.")
+                        results = [r for r in results if r['total_score'] >= score_threshold]
+                        if gender_filter != "All":
+                            include_unknown = st.session_state.get("include_unknown_gender", False)
+                            results = [
+                                r for r in results
+                                if r.get('gender', 'Unknown') == gender_filter or (include_unknown and r.get('gender', 'Unknown') == 'Unknown')
+                            ]
+                        st.session_state.screening_results = results
+                        st.session_state['page'] = 1
+                        st.success(f"✅ Screening complete! Found {len(results)} qualified candidates from folder.")
+                    except Exception as e:
+                        st.error(f"❌ Error during folder processing: {str(e)}")
     
     # Results section
     if st.session_state.screening_results:
