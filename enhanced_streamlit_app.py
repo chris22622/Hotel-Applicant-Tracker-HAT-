@@ -156,6 +156,8 @@ def initialize_session_state():
         st.session_state.show_percentiles_header = False
     if 'folder_stats' not in st.session_state:
         st.session_state.folder_stats = {}
+    if 'processed_this_session' not in st.session_state:
+        st.session_state.processed_this_session = 0
 
 @st.cache_data(show_spinner=False, ttl=600)
 def get_available_positions() -> List[str]:
@@ -664,6 +666,17 @@ def main() -> None:
         except Exception as e:
             st.sidebar.error(f"Rescan failed: {e}")
 
+    # Sidebar: Folder status counters
+    fs = st.session_state.get('folder_stats') or {}
+    if fs:
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("📁 Folder Status")
+        st.sidebar.caption(f"Path: {fs.get('path','(not set)')}")
+        st.sidebar.write(f"Total files: {fs.get('total', 0)}")
+        st.sidebar.write(f"New since last run: {fs.get('new', 0)}")
+        st.sidebar.write(f"Last scan: {fs.get('last_scan', '—')}")
+    st.sidebar.write(f"🧮 Processed this session: {st.session_state.get('processed_this_session', 0)}")
+
     # Reset filters
     if st.sidebar.button("↩️ Reset Filters"):
         # Clear related session state keys
@@ -814,6 +827,11 @@ def main() -> None:
                             ]
                         st.session_state.screening_results = results
                         st.session_state['page'] = 1
+                        # Track processed count (candidates considered this run)
+                        try:
+                            st.session_state['processed_this_session'] = st.session_state.get('processed_this_session', 0) + len(results)
+                        except Exception:
+                            pass
                         # Clean up temporary files
                         import shutil
                         shutil.rmtree(temp_dir)
@@ -856,6 +874,11 @@ def main() -> None:
                             ]
                         st.session_state.screening_results = results
                         st.session_state['page'] = 1
+                        # Track processed count (candidates considered this run)
+                        try:
+                            st.session_state['processed_this_session'] = st.session_state.get('processed_this_session', 0) + len(results)
+                        except Exception:
+                            pass
                         st.success(f"✅ Screening complete! Found {len(results)} qualified candidates from folder.")
                     except Exception as e:
                         st.error(f"❌ Error during folder processing: {str(e)}")
