@@ -14,6 +14,7 @@ from datetime import datetime
 import base64
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple, Type
+from collections import Counter
 
 # Try to import plotting libraries with fallbacks
 # Predefine names for type checkers
@@ -147,7 +148,8 @@ def initialize_session_state():
     for key in (
         'prev_sort_by', 'prev_search_query', 'prev_page_size',
         'prev_score_threshold', 'prev_gender_filter',
-        'prev_selected_position', 'prev_include_unknown_gender'
+        'prev_selected_position', 'prev_include_unknown_gender',
+        'prev_selected_recommendations'
     ):
         if key not in st.session_state:
             st.session_state[key] = None
@@ -158,6 +160,30 @@ def initialize_session_state():
         st.session_state.folder_stats = {}
     if 'processed_this_session' not in st.session_state:
         st.session_state.processed_this_session = 0
+    if 'selected_recommendations' not in st.session_state:
+        st.session_state.selected_recommendations = [
+            'Highly Recommended', 'Recommended', 'Consider with Interview', 'Not Recommended'
+        ]
+
+@st.cache_data(show_spinner=False, ttl=600)
+def get_position_summary_info(position: str) -> Dict[str, Any]:
+    """Best-effort summary of the selected position from screener intelligence."""
+    info: Dict[str, Any] = {}
+    try:
+        if enhanced_available and EnhancedHotelAIScreener is not None:
+            s = EnhancedHotelAIScreener()
+            pi = getattr(s, 'position_intelligence', {}) or {}
+            raw = pi.get(position, {}) or {}
+            for k in (
+                'description','summary','core_competencies','core_skills','keywords',
+                'required_skills','preferred_skills','experience_years','min_experience_years',
+                'aliases','title_aliases'
+            ):
+                if k in raw:
+                    info[k] = raw.get(k)
+    except Exception:
+        pass
+    return info
 
 @st.cache_data(show_spinner=False, ttl=600)
 def get_available_positions() -> List[str]:
@@ -466,6 +492,28 @@ def create_analytics_dashboard(results: List[Dict[str, Any]]) -> None:
             df_categories = pd.DataFrame(candidates_data)
             st.dataframe(df_categories, use_container_width=True)
 
+    # Top skills across results (best-effort aggregation)
+    try:
+        skills_all: List[str] = []
+        for r in results:
+            s = r.get('skills_found') or []
+            if isinstance(s, list):
+                skills_all.extend([str(x) for x in s])
+        if skills_all:
+            st.subheader("🎯 Top Skills in Current Results")
+            top = Counter(skills_all).most_common(10)
+            labels = [k for k,_ in top]
+            values = [v for _,v in top]
+            if plotly_available:
+                fig = go.Figure(data=[go.Bar(x=labels, y=values, marker_color='#1e3c72')])
+                fig.update_layout(title="Top 10 Skills", xaxis_title="Skill", yaxis_title="Frequency", height=350)
+                st.plotly_chart(fig, use_container_width=True, key="top_skills_chart")
+            else:
+                df_sk = pd.DataFrame({'Skill': labels, 'Count': values})
+                st.bar_chart(df_sk.set_index('Skill'))
+    except Exception:
+        pass
+
 def export_results_to_excel(results: List[Dict[str, Any]], position: str) -> Optional[BytesIO]:
     """Export results to Excel and provide download link."""
     if not results:
@@ -475,6 +523,8 @@ def export_results_to_excel(results: List[Dict[str, Any]], position: str) -> Opt
     excel_data = []
     for i, candidate in enumerate(results, 1):
         bench = (candidate.get('breakdown') or {}).get('benchmark') or {}
+        plugins = (candidate.get('breakdown') or {}).get('plugins') or []
+        plugin_ids = ", ".join([str(p.get('id')) for p in plugins if p.get('id')]) if plugins else ""
         excel_data.append({
             'Rank': i,
             'Name': candidate.get('candidate_name', 'Unknown'),
@@ -490,6 +540,7 @@ def export_results_to_excel(results: List[Dict[str, Any]], position: str) -> Opt
             'File Name': candidate.get('file_name', 'Unknown'),
             'Percentile (Role)': bench.get('percentile_role'),
             'Percentile (Global)': bench.get('percentile_global'),
+            'Plugins': plugin_ids,
         })
     
     df = pd.DataFrame(excel_data)
@@ -520,6 +571,8 @@ def export_results_to_csv(results: List[Dict[str, Any]], position: str) -> Optio
     rows = []
     for i, candidate in enumerate(results, 1):
         bench = (candidate.get('breakdown') or {}).get('benchmark') or {}
+        plugins = (candidate.get('breakdown') or {}).get('plugins') or []
+        plugin_ids = ", ".join([str(p.get('id')) for p in plugins if p.get('id')]) if plugins else ""
         rows.append({
             'Rank': i,
             'Name': candidate.get('candidate_name', 'Unknown'),
@@ -535,6 +588,7 @@ def export_results_to_csv(results: List[Dict[str, Any]], position: str) -> Optio
             'File Name': candidate.get('file_name', 'Unknown'),
             'Percentile (Role)': bench.get('percentile_role'),
             'Percentile (Global)': bench.get('percentile_global'),
+            'Plugins': plugin_ids,
         })
     df = pd.DataFrame(rows)
     csv_bytes = df.to_csv(index=False).encode('utf-8')
@@ -615,6 +669,7 @@ def main() -> None:
             "Sort Results By:",
             options=[
                 "Score (desc)",
+                "Percentile (Role) desc",
                 "Score (asc)",
                 "Recommendation",
                 "Name (A-Z)",
@@ -632,6 +687,17 @@ def main() -> None:
             help="Filter results by name, file name, or skill keyword"
         )
         st.session_state["search_query"] = search_query
+
+        # Recommendation filter
+        selected_recommendations = st.multiselect(
+            "Include Recommendations:",
+            options=["Highly Recommended","Recommended","Consider with Interview","Not Recommended"],
+            default=st.session_state.get('selected_recommendations') or [
+                "Highly Recommended","Recommended","Consider with Interview","Not Recommended"
+            ],
+            help="Only include candidates with these recommendation categories"
+        )
+        st.session_state['selected_recommendations'] = selected_recommendations
 
         # Pagination size
         page_size = st.number_input(
@@ -702,6 +768,8 @@ def main() -> None:
             _changed = True
         if st.session_state.get('prev_page_size') != st.session_state.get('page_size'):
             _changed = True
+        if st.session_state.get('prev_selected_recommendations') != (st.session_state.get('selected_recommendations') or []):
+            _changed = True
 
         # Update prev_* snapshots
         st.session_state['prev_selected_position'] = selected_position
@@ -711,6 +779,7 @@ def main() -> None:
         st.session_state['prev_sort_by'] = st.session_state.get('sort_by')
         st.session_state['prev_search_query'] = st.session_state.get('search_query') or ""
         st.session_state['prev_page_size'] = st.session_state.get('page_size')
+        st.session_state['prev_selected_recommendations'] = st.session_state.get('selected_recommendations') or []
 
         if _changed:
             st.session_state['page'] = 1
@@ -779,6 +848,26 @@ def main() -> None:
         except Exception as e:
             st.warning(f"Folder not accessible: {e}")
 
+    # Optional: Position Summary
+    if selected_position:
+        ps = get_position_summary_info(selected_position)
+        if ps:
+            with st.expander("📝 Position Summary (from JD intelligence)"):
+                if ps.get('description') or ps.get('summary'):
+                    st.write(ps.get('description') or ps.get('summary'))
+                key_lists = {
+                    'Core competencies': ps.get('core_competencies') or ps.get('core_skills') or ps.get('required_skills') or ps.get('keywords'),
+                    'Preferred skills': ps.get('preferred_skills'),
+                    'Aliases/titles': ps.get('aliases') or ps.get('title_aliases')
+                }
+                for label, items in key_lists.items():
+                    if items:
+                        if isinstance(items, dict):
+                            items = list(items.keys())
+                        if isinstance(items, (list, tuple, set)):
+                            items = list(items)
+                        st.write(f"**{label}:** " + ", ".join(map(str, items[:15])))
+
     # Processing section
     col1, col2, col3 = st.columns(3)
     with col2:
@@ -832,6 +921,20 @@ def main() -> None:
                             st.session_state['processed_this_session'] = st.session_state.get('processed_this_session', 0) + len(results)
                         except Exception:
                             pass
+                        # Optional auto-export to file
+                        try:
+                            if auto_export and results:
+                                excel_data = export_results_to_excel(results, selected_position)
+                                if excel_data:
+                                    out_dir = Path('screening_results')
+                                    out_dir.mkdir(parents=True, exist_ok=True)
+                                    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                                    out_path = out_dir / f"screening_results_{selected_position}_{ts}.xlsx"
+                                    with open(out_path, 'wb') as f:
+                                        f.write(excel_data.getvalue())
+                                    st.success(f"💾 Auto-saved Excel to {out_path}")
+                        except Exception as _e:
+                            st.info("Auto-export skipped.")
                         # Clean up temporary files
                         import shutil
                         shutil.rmtree(temp_dir)
@@ -879,6 +982,20 @@ def main() -> None:
                             st.session_state['processed_this_session'] = st.session_state.get('processed_this_session', 0) + len(results)
                         except Exception:
                             pass
+                        # Optional auto-export to file
+                        try:
+                            if auto_export and results:
+                                excel_data = export_results_to_excel(results, selected_position)
+                                if excel_data:
+                                    out_dir = Path('screening_results')
+                                    out_dir.mkdir(parents=True, exist_ok=True)
+                                    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                                    out_path = out_dir / f"screening_results_{selected_position}_{ts}.xlsx"
+                                    with open(out_path, 'wb') as f:
+                                        f.write(excel_data.getvalue())
+                                    st.success(f"💾 Auto-saved Excel to {out_path}")
+                        except Exception as _e:
+                            st.info("Auto-export skipped.")
                         st.success(f"✅ Screening complete! Found {len(results)} qualified candidates from folder.")
                     except Exception as e:
                         st.error(f"❌ Error during folder processing: {str(e)}")
@@ -910,6 +1027,12 @@ def main() -> None:
         sort_by = st.session_state.get("sort_by", "Score (desc)")
         if sort_by == "Score (desc)":
             results = sorted(results, key=lambda r: r.get('total_score', 0), reverse=True)
+        elif sort_by == "Percentile (Role) desc":
+            def _role_pct(r):
+                b = (r.get('breakdown') or {}).get('benchmark') or {}
+                v = b.get('percentile_role')
+                return -1 if v is None else v
+            results = sorted(results, key=_role_pct, reverse=True)
         elif sort_by == "Score (asc)":
             results = sorted(results, key=lambda r: r.get('total_score', 0))
         elif sort_by == "Recommendation":
@@ -918,6 +1041,12 @@ def main() -> None:
             results = sorted(results, key=lambda r: str(r.get('candidate_name', '')))
         elif sort_by == "Name (Z-A)":
             results = sorted(results, key=lambda r: str(r.get('candidate_name', '')), reverse=True)
+
+        # Apply recommendation category filter
+        selected_recs = st.session_state.get('selected_recommendations') or [
+            "Highly Recommended","Recommended","Consider with Interview","Not Recommended"
+        ]
+        results = [r for r in results if (r.get('recommendation') in selected_recs)]
 
         # Pagination
         page_size = st.session_state.get("page_size", 10)
