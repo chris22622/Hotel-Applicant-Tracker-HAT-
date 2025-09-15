@@ -243,6 +243,19 @@ def create_candidate_card(candidate: Dict[str, Any], rank: int) -> None:
                 st.write(f"🎯 Key Skills: {', '.join(skills[:5])}")
                 if len(skills) > 5:
                     st.write(f"+ {len(skills) - 5} more skills")
+            # Benchmarks (if available)
+            bench = (candidate.get('breakdown') or {}).get('benchmark') or {}
+            gp = bench.get('percentile_global')
+            rp = bench.get('percentile_role')
+            if gp is not None or rp is not None:
+                st.write("**Benchmarks:**")
+                st.write(f"📈 Percentile (Role): {rp if rp is not None else '—'}% | Global: {gp if gp is not None else '—'}%")
+            # Plugin effects (if available)
+            plugins = (candidate.get('breakdown') or {}).get('plugins') or []
+            if plugins:
+                ids = [str(p.get('id')) for p in plugins if p.get('id')]
+                if ids:
+                    st.write(f"🔌 Plugins: {', '.join(ids[:4])}{'…' if len(ids) > 4 else ''}")
         
         # Score breakdown chart
         if 'category_scores' in candidate:
@@ -434,6 +447,7 @@ def export_results_to_excel(results: List[Dict[str, Any]], position: str) -> Opt
     # Create Excel data
     excel_data = []
     for i, candidate in enumerate(results, 1):
+        bench = (candidate.get('breakdown') or {}).get('benchmark') or {}
         excel_data.append({
             'Rank': i,
             'Name': candidate.get('candidate_name', 'Unknown'),
@@ -446,7 +460,9 @@ def export_results_to_excel(results: List[Dict[str, Any]], position: str) -> Opt
             'Experience Quality': candidate.get('experience_quality', 'Unknown'),
             'Skills Count': len(candidate.get('skills_found', [])),
             'Key Skills': ', '.join(candidate.get('skills_found', [])[:5]),
-            'File Name': candidate.get('file_name', 'Unknown')
+            'File Name': candidate.get('file_name', 'Unknown'),
+            'Percentile (Role)': bench.get('percentile_role'),
+            'Percentile (Global)': bench.get('percentile_global'),
         })
     
     df = pd.DataFrame(excel_data)
@@ -476,6 +492,7 @@ def export_results_to_csv(results: List[Dict[str, Any]], position: str) -> Optio
         return None
     rows = []
     for i, candidate in enumerate(results, 1):
+        bench = (candidate.get('breakdown') or {}).get('benchmark') or {}
         rows.append({
             'Rank': i,
             'Name': candidate.get('candidate_name', 'Unknown'),
@@ -488,7 +505,9 @@ def export_results_to_csv(results: List[Dict[str, Any]], position: str) -> Optio
             'Experience Quality': candidate.get('experience_quality', 'Unknown'),
             'Skills Count': len(candidate.get('skills_found', [])),
             'Key Skills': ', '.join(candidate.get('skills_found', [])[:5]),
-            'File Name': candidate.get('file_name', 'Unknown')
+            'File Name': candidate.get('file_name', 'Unknown'),
+            'Percentile (Role)': bench.get('percentile_role'),
+            'Percentile (Global)': bench.get('percentile_global'),
         })
     df = pd.DataFrame(rows)
     csv_bytes = df.to_csv(index=False).encode('utf-8')
@@ -674,8 +693,20 @@ def main() -> None:
         with colf3:
             auto_refresh = st.checkbox("Auto-refresh UI", value=False, help="Auto-refresh this page to pick up new files")
             interval = st.number_input("Every (sec)", min_value=5, max_value=120, value=15, step=5)
+        only_new = st.checkbox("Only new since last run", value=False, help="Process only files not seen before (by modified time)")
         try:
             files_in_folder = [p for p in folder_path.glob("*.*") if p.suffix.lower() in (".pdf",".doc",".docx",".txt",".jpg",".jpeg",".png")]
+            if only_new:
+                cache_key = f"seen_mtimes::{str(folder_path)}"
+                seen = st.session_state.get(cache_key, {})
+                new_files = []
+                for p in files_in_folder:
+                    mt = p.stat().st_mtime
+                    if seen.get(p.name) != mt:
+                        new_files.append(p)
+                        seen[p.name] = mt
+                st.session_state[cache_key] = seen
+                files_in_folder = new_files
             st.info(f"📂 {len(files_in_folder)} files in {folder_path}")
             st.caption(f"Last scan: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             if auto_refresh and interval:
