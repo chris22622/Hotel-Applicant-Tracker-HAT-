@@ -151,6 +151,11 @@ def initialize_session_state():
     ):
         if key not in st.session_state:
             st.session_state[key] = None
+    # UI toggles and session stats
+    if 'show_percentiles_header' not in st.session_state:
+        st.session_state.show_percentiles_header = False
+    if 'folder_stats' not in st.session_state:
+        st.session_state.folder_stats = {}
 
 @st.cache_data(show_spinner=False, ttl=600)
 def get_available_positions() -> List[str]:
@@ -198,7 +203,16 @@ def create_candidate_card(candidate: Dict[str, Any], rank: int) -> None:
         icon = "❌"
     
     # Create expandable candidate card
-    with st.expander(f"{icon} #{rank} {candidate.get('candidate_name', 'Unknown')} - {score*100:.1f} percent ({recommendation})"):
+    # Optional percentiles in header
+    header_suffix = ""
+    if st.session_state.get('show_percentiles_header'):
+        bench = (candidate.get('breakdown') or {}).get('benchmark') or {}
+        rp = bench.get('percentile_role')
+        gp = bench.get('percentile_global')
+        if rp is not None or gp is not None:
+            header_suffix = f" [P_role {rp if rp is not None else '—'} | P_global {gp if gp is not None else '—'}]"
+
+    with st.expander(f"{icon} #{rank} {candidate.get('candidate_name', 'Unknown')} - {score*100:.1f} percent ({recommendation}){header_suffix}"):
         col1, col2 = st.columns(2)
         
         with col1:
@@ -256,6 +270,17 @@ def create_candidate_card(candidate: Dict[str, Any], rank: int) -> None:
                 ids = [str(p.get('id')) for p in plugins if p.get('id')]
                 if ids:
                     st.write(f"🔌 Plugins: {', '.join(ids[:4])}{'…' if len(ids) > 4 else ''}")
+                with st.expander("Plugin details"):
+                    for pr in plugins:
+                        st.write(f"• {pr.get('id','plugin')} ")
+                        deltas = pr.get('applied_deltas') or {}
+                        if deltas:
+                            st.caption("Deltas: " + ", ".join(f"{k}+{v}" for k,v in deltas.items()))
+                        if pr.get('post_bonus'):
+                            st.caption(f"Post bonus: {pr.get('post_bonus')}")
+                        notes = pr.get('notes') or pr.get('details')
+                        if notes:
+                            st.caption(f"Notes: {notes}")
         
         # Score breakdown chart
         if 'category_scores' in candidate:
@@ -623,6 +648,22 @@ def main() -> None:
             help="Automatically generate Excel report"
         )
 
+    # Sidebar extras: UI toggles and JD rescan
+    st.sidebar.markdown("---")
+    st.sidebar.checkbox("Show percentiles in header", key="show_percentiles_header", value=st.session_state.get('show_percentiles_header', False))
+    if st.sidebar.button("🔁 Rescan Job Descriptions"):
+        try:
+            if enhanced_available and EnhancedHotelAIScreener is not None:
+                _tmp = EnhancedHotelAIScreener()
+                st.sidebar.success(f"JD enrichment loaded for {len(getattr(_tmp, 'position_intelligence', {}))} position(s)")
+            elif HotelAIScreener is not None:
+                _tmp = HotelAIScreener()
+                st.sidebar.success("Basic screener initialized")
+            else:
+                st.sidebar.warning("No screener available")
+        except Exception as e:
+            st.sidebar.error(f"Rescan failed: {e}")
+
     # Reset filters
     if st.sidebar.button("↩️ Reset Filters"):
         # Clear related session state keys
@@ -696,6 +737,7 @@ def main() -> None:
         only_new = st.checkbox("Only new since last run", value=False, help="Process only files not seen before (by modified time)")
         try:
             files_in_folder = [p for p in folder_path.glob("*.*") if p.suffix.lower() in (".pdf",".doc",".docx",".txt",".jpg",".jpeg",".png")]
+            new_ct = None
             if only_new:
                 cache_key = f"seen_mtimes::{str(folder_path)}"
                 seen = st.session_state.get(cache_key, {})
@@ -706,9 +748,18 @@ def main() -> None:
                         new_files.append(p)
                         seen[p.name] = mt
                 st.session_state[cache_key] = seen
+                new_ct = len(new_files)
                 files_in_folder = new_files
+            total_ct = len(files_in_folder) if only_new else len(files_in_folder)
             st.info(f"📂 {len(files_in_folder)} files in {folder_path}")
             st.caption(f"Last scan: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            # Save folder stats for sidebar display
+            st.session_state.folder_stats = {
+                'path': str(folder_path),
+                'total': len([p for p in folder_path.glob('*.*') if p.suffix.lower() in ('.pdf','.doc','.docx','.txt','.jpg','.jpeg','.png')]),
+                'new': new_ct if new_ct is not None else 0,
+                'last_scan': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
             if auto_refresh and interval:
                 # Inject meta refresh to trigger rerun on an interval
                 st.markdown(f"<meta http-equiv='refresh' content='{int(interval)}'>", unsafe_allow_html=True)
