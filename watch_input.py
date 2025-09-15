@@ -14,6 +14,7 @@ def main():
     ap.add_argument('--position', required=True, help='Target position to screen for')
     ap.add_argument('--input', default='input_resumes', help='Input directory to watch')
     ap.add_argument('--interval', type=int, default=5, help='Polling interval seconds')
+    ap.add_argument('--ext', default='pdf,doc,docx,txt', help='Comma-separated allowed extensions')
     ap.add_argument('--explain', action='store_true', help='Enable explain mode')
     args = ap.parse_args()
 
@@ -24,18 +25,24 @@ def main():
     if args.explain:
         screener.set_explain_mode(True)
 
-    seen = set(p.name for p in input_dir.iterdir() if p.is_file())
-    print(f"Watching {input_dir.resolve()} for new files (position={args.position})...")
+    allowed = {'.' + e.strip().lower() for e in args.ext.split(',') if e.strip()}
+    mtimes = {p.name: p.stat().st_mtime for p in input_dir.iterdir() if p.is_file()}
+    processed = 0
+    print(f"Watching {input_dir.resolve()} for new/updated files (position={args.position}, ext={sorted(allowed)})...")
     while True:
         try:
             for p in input_dir.iterdir():
                 if not p.is_file():
                     continue
-                if p.name in seen:
+                if allowed and p.suffix.lower() not in allowed:
                     continue
-                seen.add(p.name)
+                mtime = p.stat().st_mtime
+                if mtimes.get(p.name) == mtime:
+                    continue
+                mtimes[p.name] = mtime
                 result = screener.process_single_resume(p, args.position)
                 if result:
+                    processed += 1
                     print(f"Processed: {p.name} -> {result['total_score']:.1%} {result['recommendation']}")
         except KeyboardInterrupt:
             print("Stopping watch mode...")
