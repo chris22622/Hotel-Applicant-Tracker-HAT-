@@ -743,6 +743,41 @@ def main() -> None:
         st.sidebar.write(f"Last scan: {fs.get('last_scan', '—')}")
     st.sidebar.write(f"🧮 Processed this session: {st.session_state.get('processed_this_session', 0)}")
 
+    # Performance settings
+    st.sidebar.markdown("---")
+    with st.sidebar.expander("⚡ Performance Settings", expanded=False):
+        truthy = {"1","true","yes","on","y"}
+        fast_default = str(os.getenv('HAT_FAST_MODE', '0')).strip().lower() in truthy
+        ocr_off_default = str(os.getenv('HAT_DISABLE_OCR', '0')).strip().lower() in truthy
+        ocr_pages_default = int(os.getenv('HAT_OCR_MAX_PAGES', '2') or '2')
+        max_files_default = int(os.getenv('HAT_MAX_FILES', '0') or '0')
+        fast_mode = st.checkbox("Fast mode (skip OCR/pdfminer)", value=fast_default, help="Speeds up parsing by skipping heavy PDF parsers and OCR")
+        disable_ocr = st.checkbox("Disable OCR", value=ocr_off_default, help="Never use OCR; fastest but image-only PDFs will have no text")
+        ocr_pages = st.number_input("OCR max pages", min_value=1, max_value=10, value=max(1, ocr_pages_default), step=1)
+        max_files = st.number_input("Max files per run (0 = all)", min_value=0, max_value=2000, value=max(0, max_files_default), step=10)
+        if st.button("Apply performance settings"):
+            os.environ['HAT_FAST_MODE'] = '1' if fast_mode else '0'
+            os.environ['HAT_DISABLE_OCR'] = '1' if disable_ocr else '0'
+            os.environ['HAT_OCR_MAX_PAGES'] = str(int(ocr_pages))
+            os.environ['HAT_MAX_FILES'] = str(int(max_files))
+            st.success("Performance settings applied. They affect the next screening run.")
+            st.rerun()
+
+    # Maintenance actions
+    with st.sidebar.expander("🧹 Maintenance", expanded=False):
+        if st.button("Clear 'Only new since last run' cache"):
+            try:
+                fs = st.session_state.get('folder_stats') or {}
+                cache_key = f"seen_mtimes::{fs.get('path','')}"
+                if cache_key in st.session_state:
+                    del st.session_state[cache_key]
+                st.success("Cleared cache for 'Only new since last run'.")
+            except Exception as e:
+                st.warning(f"Nothing to clear or error: {e}")
+        if st.button("♻️ Reset session counters"):
+            st.session_state['processed_this_session'] = 0
+            st.success("Session counters reset.")
+
     # Reset filters
     if st.sidebar.button("↩️ Reset Filters"):
         # Clear related session state keys
