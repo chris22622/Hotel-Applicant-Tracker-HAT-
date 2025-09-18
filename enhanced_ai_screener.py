@@ -161,6 +161,23 @@ class EnhancedHotelAIScreener:
         if self.job_desc_dir:
             logger.info(f"📄 Job Descriptions: {self.job_desc_dir} (loaded)")
         logger.info(f"🧪 Scoring Version: {SCORING_VERSION}")
+        # Performance tuning flags (via environment variables)
+        self.fast_mode: bool = str(os.getenv('HAT_FAST_MODE', '0')).strip().lower() in ('1','true','yes','on')
+        self.disable_ocr: bool = str(os.getenv('HAT_DISABLE_OCR', '0')).strip().lower() in ('1','true','yes','on')
+        try:
+            self.ocr_max_pages: int = int(os.getenv('HAT_OCR_MAX_PAGES', '2'))
+        except Exception:
+            self.ocr_max_pages = 2
+        try:
+            self.max_files: int = int(os.getenv('HAT_MAX_FILES', '0'))
+        except Exception:
+            self.max_files = 0
+        if self.fast_mode:
+            logger.info("⚡ Fast mode enabled")
+        if self.disable_ocr:
+            logger.info("🛑 OCR disabled by config")
+        if self.max_files > 0:
+            logger.info(f"📦 File cap per run: {self.max_files}")
 
     # ---------------- Metrics & Benchmarks -----------------
     def _metrics_dir(self) -> Path:
@@ -6398,8 +6415,9 @@ class EnhancedHotelAIScreener:
             
             # Extract text from file
             text = self._extract_text_from_file(file_path)
-            if not text or len(text.strip()) < 50:
-                logger.warning(f"⚠️ Insufficient text extracted from {file_path.name}")
+            # Allow more leniency to avoid dropping all candidates when text extraction is weak
+            if not text or len(text.strip()) < 20:
+                logger.warning(f"⚠️ Insufficient text extracted from {file_path.name} (len={len(text.strip()) if text else 0})")
                 return None
 
             # Duplicate detection (hash of normalized text)
@@ -6680,18 +6698,24 @@ class EnhancedHotelAIScreener:
                             primary_text += extracted + "\n"
                 except Exception:
                     pass
-                # Engine 2: pdfminer.six if weak
-                if len(primary_text.strip()) < 40:
+                # Engine 2: pdfminer.six if weak and not in fast mode
+                if len(primary_text.strip()) < 40 and not getattr(self, 'fast_mode', False):
                     try:
                         from pdfminer.high_level import extract_text as pdfminer_extract
                         alt_text = pdfminer_extract(str(file_path)) or ""
                     except Exception:
                         alt_text = ""
-                # Engine 3: OCR fallback
-                if ocr_available and len(primary_text.strip() + alt_text.strip()) < 40:
+                # Engine 3: OCR fallback if enabled and still weak
+                if (
+                    ocr_available
+                    and len((primary_text or '').strip() + (alt_text or '').strip()) < 40
+                    and not getattr(self, 'disable_ocr', False)
+                    and not getattr(self, 'fast_mode', False)
+                ):
                     try:
                         pages = pdf2image.convert_from_path(file_path)
-                        for pg in pages[:8]:
+                        max_pages = getattr(self, 'ocr_max_pages', 2) or 2
+                        for pg in pages[:max_pages]:
                             try:
                                 ocr_text += pytesseract.image_to_string(pg) + "\n"
                             except Exception:
@@ -6706,7 +6730,7 @@ class EnhancedHotelAIScreener:
                         primary_text += p.text + "\n"
                 except Exception:
                     primary_text = ""
-            elif file_ext in ['.jpg', '.jpeg', '.png', '.tiff', '.bmp'] and ocr_available:
+            elif file_ext in ['.jpg', '.jpeg', '.png', '.tiff', '.bmp'] and ocr_available and not getattr(self, 'disable_ocr', False) and not getattr(self, 'fast_mode', False):
                 try:
                     image = Image.open(file_path)
                     ocr_text = pytesseract.image_to_string(image)
@@ -6940,6 +6964,9 @@ class EnhancedHotelAIScreener:
         resume_files = []
         for ext in extensions:
             resume_files.extend(self.input_dir.glob(ext))
+        # Optional cap for performance
+        if getattr(self, 'max_files', 0) and len(resume_files) > self.max_files:
+            resume_files = resume_files[: self.max_files]
         
         if not resume_files:
             logger.warning(f"📭 No resume files found in {self.input_dir}")
@@ -6957,11 +6984,12 @@ class EnhancedHotelAIScreener:
         # Optional strict filter: keep only candidates with explicit role/title/training evidence
         if require_explicit_role:
             with_evidence = [c for c in candidates if c.get("explicit_role_evidence", False)]
-            if with_evidence:
+            # Only enforce if at least a small fraction have evidence; otherwise keep all to avoid empty results
+            if with_evidence and (len(with_evidence) >= max(1, int(0.2 * len(candidates)))):
                 logger.info(f"🔎 Strict role filter retained {len(with_evidence)} of {len(candidates)} candidates")
                 candidates = with_evidence
             else:
-                logger.info("🔎 Strict role filter found no explicit matches; returning unfiltered results")
+                logger.info("🔎 Strict role filter not enforced (insufficient explicit matches); returning unfiltered results")
         
         # Sort by score (highest first)
         candidates.sort(key=lambda x: x["total_score"], reverse=True)
