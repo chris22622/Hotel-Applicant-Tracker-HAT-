@@ -26,11 +26,12 @@ echo Enter how many candidates you want returned:
 set /p TOPN="Top N: "
 
 echo.
-echo Optional: Use ChatGPT to re-rank top candidates? (y/N)
-set /p USELLM="Use LLM [y/N]: "
+echo Using ChatGPT to re-rank top candidates by default.
+echo (If you want to disable it for this run, type N and press Enter.)
+set /p USELLM="Use LLM [Y/n]: "
 
-set LLM_FLAG=
-if /I "%USELLM%"=="Y" set LLM_FLAG=--llm
+set LLM_FLAG=--llm
+if /I "%USELLM%"=="N" set LLM_FLAG=
 
 echo.
 echo Running quick pick for "%POSITION%"; Top %TOPN% %USELLM%

@@ -783,7 +783,8 @@ def main() -> None:
     # Optional LLM Boost settings
     with st.sidebar.expander("🧠 LLM Boost (optional)", expanded=False):
         st.caption("Uses an LLM to re-rank the top candidates post-scoring. Requires OPENAI_API_KEY.")
-        st.session_state['llm_enabled'] = st.checkbox("Enable LLM re-ranking", value=False, help="If disabled, the app runs fully local as before.")
+        default_llm_on = True if os.environ.get('OPENAI_API_KEY') else False
+        st.session_state['llm_enabled'] = st.checkbox("Enable LLM re-ranking", value=default_llm_on, help="If disabled, the app runs fully local as before.")
         st.session_state['llm_top_n'] = st.slider("Re-rank top N", min_value=3, max_value=25, value=10, step=1)
         st.session_state['llm_model'] = st.text_input("Model", value="gpt-4o-mini")
         st.session_state['llm_temp'] = st.slider("Temperature", min_value=0.0, max_value=1.0, value=0.1, step=0.1)

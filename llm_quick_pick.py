@@ -57,6 +57,7 @@ def main() -> None:
     ap.add_argument("--pool", type=int, default=None, help="How many candidates to feed into LLM (default: same as --top)")
     # LLM options
     ap.add_argument("--llm", action="store_true", help="Enable LLM re-ranking (requires OPENAI_API_KEY)")
+    ap.add_argument("--no-llm", action="store_true", help="Disable LLM re-ranking even if API key is present")
     ap.add_argument("--model", default="gpt-4o-mini", help="OpenAI model to use")
     ap.add_argument("--temp", type=float, default=0.1, help="Sampling temperature")
     ap.add_argument("--timeout", type=int, default=30, help="Model timeout seconds")
@@ -90,8 +91,11 @@ def main() -> None:
         print("No candidates meet the threshold.")
         raise SystemExit(0)
 
+    # Decide if we should use LLM: on by default when OPENAI_API_KEY is set, unless explicitly disabled
+    use_llm = bool(args.llm or (os.environ.get("OPENAI_API_KEY") and not args.no_llm))
+
     # If LLM enabled and available, rerank the top pool
-    if args.llm and LLMReranker is not None and os.environ.get("OPENAI_API_KEY"):
+    if use_llm and LLMReranker is not None and os.environ.get("OPENAI_API_KEY"):
         pool = results[: pool_n]
         # JD text from screener if available
         try:
@@ -110,10 +114,12 @@ def main() -> None:
             print(f"LLM re-ranking skipped due to error: {e}")
         results = pool + results[pool_n:]
     else:
-        if args.llm and not os.environ.get("OPENAI_API_KEY"):
-            print("⚠️ LLM requested but OPENAI_API_KEY not set. Running with local ranking only.")
-        elif args.llm and LLMReranker is None:
-            print("⚠️ LLM requested but llm_reranker not available. Running with local ranking only.")
+        if args.no_llm:
+            print("ℹ️ LLM explicitly disabled for this run. Using local ranking only.")
+        elif use_llm and not os.environ.get("OPENAI_API_KEY"):
+            print("⚠️ LLM requested by default but OPENAI_API_KEY not set. Running with local ranking only.")
+        elif (args.llm or use_llm) and LLMReranker is None:
+            print("⚠️ LLM requested but llm_reranker is not available. Running with local ranking only.")
 
     # Final top-N slice
     results = results[: top_n]

@@ -73,6 +73,32 @@ if not errorlevel 1 (
     echo ⚠️  OCR packages failed - text files will work
 )
 
+:: Install OpenAI client for ChatGPT (recommended)
+echo 📦 Installing ChatGPT client (OpenAI SDK)...
+python -m pip install openai --quiet
+if not errorlevel 1 (
+    echo ✅ ChatGPT client installed
+) else (
+    echo ⚠️  ChatGPT client install failed - LLM features will be disabled
+)
+
+:: Prompt to set OPENAI_API_KEY persistently (Windows only)
+set /p SETKEY="Would you like to set OPENAI_API_KEY now for LLM features? (y/N): "
+if /I "%SETKEY%"=="Y" (
+    set /p OPENAI_API_KEY="Enter your OpenAI API key: "
+    if NOT "%OPENAI_API_KEY%"=="" (
+        echo 🔐 Storing OPENAI_API_KEY for current user (you may need to reopen terminals)...
+        setx OPENAI_API_KEY "%OPENAI_API_KEY%" >nul
+        if errorlevel 1 (
+            echo ⚠️  Could not persist OPENAI_API_KEY. You can set it manually later.
+        ) else (
+            echo ✅ OPENAI_API_KEY saved. New shells will inherit it.
+        )
+    ) else (
+        echo ⚠️  No key entered. You can set it later with: setx OPENAI_API_KEY "sk-..."
+    )
+)
+
 :: Create input and output directories
 if not exist "input_resumes" (
     mkdir input_resumes
