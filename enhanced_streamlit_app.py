@@ -62,6 +62,14 @@ except ImportError:
         st.error("❌ No screener module found!")
         st.stop()
 
+# Optional LLM re-ranker import (kept optional to preserve offline/local operation)
+LLMReranker: Optional[Type[Any]] = None
+try:
+    from llm_reranker import LLMReranker as _LLMReranker  # type: ignore
+    LLMReranker = _LLMReranker
+except Exception:
+    LLMReranker = None  # type: ignore
+
 # Page configuration
 st.set_page_config(
     page_title="Hotel AI Resume Screener",
@@ -285,6 +293,15 @@ def create_candidate_card(candidate: Dict[str, Any], rank: int) -> None:
                 st.write(f"🎯 Key Skills: {', '.join(skills[:5])}")
                 if len(skills) > 5:
                     st.write(f"+ {len(skills) - 5} more skills")
+            # LLM rationale (if any)
+            if candidate.get('llm_reason') or candidate.get('llm_score'):
+                st.write("**LLM Boost:**")
+                lr = candidate.get('llm_reason')
+                ls = candidate.get('llm_score')
+                ln = candidate.get('llm_rank')
+                st.write(f"🤖 Reason: {lr if lr else '—'}")
+                if ls is not None or ln is not None:
+                    st.caption(f"LLM rank: {ln if ln is not None else '—'} • LLM score: {ls if ls is not None else '—'}")
             # Benchmarks (if available)
             bench = (candidate.get('breakdown') or {}).get('benchmark') or {}
             gp = bench.get('percentile_global')
@@ -763,6 +780,19 @@ def main() -> None:
             st.success("Performance settings applied. They affect the next screening run.")
             st.rerun()
 
+    # Optional LLM Boost settings
+    with st.sidebar.expander("🧠 LLM Boost (optional)", expanded=False):
+        st.caption("Uses an LLM to re-rank the top candidates post-scoring. Requires OPENAI_API_KEY.")
+        st.session_state['llm_enabled'] = st.checkbox("Enable LLM re-ranking", value=False, help="If disabled, the app runs fully local as before.")
+        st.session_state['llm_top_n'] = st.slider("Re-rank top N", min_value=3, max_value=25, value=10, step=1)
+        st.session_state['llm_model'] = st.text_input("Model", value="gpt-4o-mini")
+        st.session_state['llm_temp'] = st.slider("Temperature", min_value=0.0, max_value=1.0, value=0.1, step=0.1)
+        st.session_state['llm_timeout'] = st.number_input("Timeout (sec)", min_value=5, max_value=120, value=30, step=5)
+        st.session_state['llm_redact'] = st.checkbox("Redact PII in context", value=True)
+        if st.session_state['llm_enabled']:
+            if not os.environ.get('OPENAI_API_KEY'):
+                st.warning("Set environment variable OPENAI_API_KEY to use LLM re-ranking.")
+
     # Maintenance actions
     with st.sidebar.expander("🧹 Maintenance", expanded=False):
         if st.button("Clear 'Only new since last run' cache"):
@@ -930,6 +960,27 @@ def main() -> None:
                             max_candidates,
                             require_explicit_role=st.session_state.get("strict_role_match", True),
                         )
+                        # Optional LLM re-rank on top-N after local scoring
+                        try:
+                            if (st.session_state.get('llm_enabled') and LLMReranker is not None and results):
+                                top_n = int(st.session_state.get('llm_top_n') or 10)
+                                top = results[: top_n]
+                                # Pull JD text for this position from screener if available
+                                jd_text = ""
+                                try:
+                                    jd_text = (getattr(screener, "_jd_raw_texts", {}) or {}).get(selected_position, "")
+                                except Exception:
+                                    jd_text = ""
+                                reranker = LLMReranker(
+                                    model=str(st.session_state.get('llm_model') or 'gpt-4o-mini'),
+                                    temperature=float(st.session_state.get('llm_temp') or 0.1),
+                                    timeout_seconds=int(st.session_state.get('llm_timeout') or 30),
+                                    redact_pii=bool(st.session_state.get('llm_redact') or True),
+                                )
+                                top = reranker.rerank(selected_position, jd_text, top)
+                                results = top + results[top_n:]
+                        except Exception:
+                            pass
                         # Enforce strict role evidence if enabled and available
                         if st.session_state.get("strict_role_match", True):
                             if results and all("explicit_role_evidence" in r for r in results):
@@ -994,6 +1045,26 @@ def main() -> None:
                             max_candidates,
                             require_explicit_role=st.session_state.get("strict_role_match", True),
                         )
+                        # Optional LLM re-rank on top-N after local scoring
+                        try:
+                            if (st.session_state.get('llm_enabled') and LLMReranker is not None and results):
+                                top_n = int(st.session_state.get('llm_top_n') or 10)
+                                top = results[: top_n]
+                                jd_text = ""
+                                try:
+                                    jd_text = (getattr(screener, "_jd_raw_texts", {}) or {}).get(selected_position, "")
+                                except Exception:
+                                    jd_text = ""
+                                reranker = LLMReranker(
+                                    model=str(st.session_state.get('llm_model') or 'gpt-4o-mini'),
+                                    temperature=float(st.session_state.get('llm_temp') or 0.1),
+                                    timeout_seconds=int(st.session_state.get('llm_timeout') or 30),
+                                    redact_pii=bool(st.session_state.get('llm_redact') or True),
+                                )
+                                top = reranker.rerank(selected_position, jd_text, top)
+                                results = top + results[top_n:]
+                        except Exception:
+                            pass
                         if st.session_state.get("strict_role_match", True):
                             if results and all("explicit_role_evidence" in r for r in results):
                                 before_ct = len(results)
