@@ -6723,13 +6723,48 @@ class EnhancedHotelAIScreener:
                     except Exception:
                         pass
             elif file_ext in ['.docx', '.doc']:
+                # Primary attempt: python-docx for .docx
                 try:
-                    import docx
-                    doc = docx.Document(file_path)
-                    for p in doc.paragraphs:
-                        primary_text += p.text + "\n"
+                    import docx  # type: ignore
+                    if file_ext == '.docx':
+                        doc = docx.Document(file_path)
+                        for p in doc.paragraphs:
+                            primary_text += p.text + "\n"
+                    else:
+                        primary_text = ""
                 except Exception:
                     primary_text = ""
+                # Fallback 1: docx2txt (works for .docx)
+                if len(primary_text.strip()) < 40 and file_ext == '.docx':
+                    try:
+                        import docx2txt  # type: ignore
+                        alt_text = docx2txt.process(str(file_path)) or ""
+                    except Exception:
+                        pass
+                # Fallback 2: textract (can handle .doc/.docx when dependencies available)
+                if len((primary_text + alt_text).strip()) < 40:
+                    try:
+                        import textract  # type: ignore
+                        _bytes = textract.process(str(file_path))
+                        if isinstance(_bytes, (bytes, bytearray)):
+                            alt_text = _bytes.decode('utf-8', errors='ignore')
+                    except Exception:
+                        pass
+                # Fallback 3: naive RTF stripper if file actually contains RTF content
+                if len((primary_text + alt_text).strip()) < 40:
+                    try:
+                        raw = file_path.read_bytes()
+                        # Detect RTF header
+                        if raw[:5].decode(errors='ignore').startswith('{\\rtf'):
+                            raw_txt = raw.decode('utf-8', errors='ignore')
+                            # Remove RTF control words and groups
+                            cleaned = re.sub(r'\\pard|\\par', '\n', raw_txt)
+                            cleaned = re.sub(r'\\[a-zA-Z]+-?\d*\s?', ' ', cleaned)
+                            cleaned = re.sub(r'{[^{}]*}', ' ', cleaned)
+                            cleaned = re.sub(r'\s+', ' ', cleaned)
+                            alt_text = cleaned
+                    except Exception:
+                        pass
             elif file_ext in ['.jpg', '.jpeg', '.png', '.tiff', '.bmp'] and ocr_available and not getattr(self, 'disable_ocr', False) and not getattr(self, 'fast_mode', False):
                 try:
                     image = Image.open(file_path)
@@ -6755,6 +6790,43 @@ class EnhancedHotelAIScreener:
         except Exception as e:
             logger.error(f"Text extraction failed for {file_path.name}: {e}")
             return ""
+
+    def _assess_content_sufficiency(self, text: str, sections: Dict[str, str]) -> Dict[str, Any]:
+        """Heuristic content sufficiency check used for soft penalties and diagnostics.
+
+        Returns a dict with:
+        - token_count: int
+        - unique_token_ratio: float (0..1)
+        - length_flag: bool (True if too short)
+        - diversity_flag: bool (True if vocabulary diversity is low)
+        - low_information: bool (True if clearly low-information content)
+        - sections_detected: int
+        """
+        try:
+            txt = (text or "").strip()
+            if not txt:
+                return {"token_count": 0, "unique_token_ratio": 0.0, "length_flag": True, "diversity_flag": True, "low_information": True, "sections_detected": 0}
+
+            tokens = re.findall(r"[A-Za-z]{2,}", txt)
+            token_count = len(tokens)
+            unique = len(set(t.lower() for t in tokens))
+            uniq_ratio = (unique / token_count) if token_count else 0.0
+
+            # Thresholds tuned to be lenient to avoid dropping all candidates
+            length_flag = token_count < 120  # short resumes often <120 tokens
+            diversity_flag = uniq_ratio < 0.18  # very repetitive
+            low_information = token_count < 60 or (token_count < 120 and uniq_ratio < 0.14)
+
+            return {
+                "token_count": int(token_count),
+                "unique_token_ratio": float(round(uniq_ratio, 4)),
+                "length_flag": bool(length_flag),
+                "diversity_flag": bool(diversity_flag),
+                "low_information": bool(low_information),
+                "sections_detected": int(len(sections or {})),
+            }
+        except Exception:
+            return {"token_count": 0, "unique_token_ratio": 0.0, "length_flag": False, "diversity_flag": False, "low_information": False, "sections_detected": 0}
     
     def _extract_candidate_info(self, text: str) -> Dict[str, Any]:
         """Extract basic candidate information from resume text."""
