@@ -83,21 +83,36 @@ if not errorlevel 1 (
 )
 
 :: Prompt to set OPENAI_API_KEY persistently (Windows only)
-set /p SETKEY="Would you like to set OPENAI_API_KEY now for LLM features? (y/N): "
-if /I "%SETKEY%"=="Y" (
-    set /p OPENAI_API_KEY="Enter your OpenAI API key: "
-    if NOT "%OPENAI_API_KEY%"=="" (
-        echo 🔐 Storing OPENAI_API_KEY for current user (you may need to reopen terminals)...
-        setx OPENAI_API_KEY "%OPENAI_API_KEY%" >nul
-        if errorlevel 1 (
-            echo ⚠️  Could not persist OPENAI_API_KEY. You can set it manually later.
-        ) else (
-            echo ✅ OPENAI_API_KEY saved. New shells will inherit it.
-        )
-    ) else (
-        echo ⚠️  No key entered. You can set it later with: setx OPENAI_API_KEY "sk-..."
-    )
+echo.
+echo Would you like to set your OpenAI API key now for LLM features?
+echo This will store it in your user environment and also set it for this session.
+choice /C YN /N /M "Set OPENAI_API_KEY now? [Y/N]: "
+if errorlevel 2 goto skip_set_openai_key
+
+set "OPENAI_API_KEY="
+set /p OPENAI_API_KEY="Enter your OpenAI API key (starts with sk-): "
+if "%OPENAI_API_KEY%"=="" (
+    echo ⚠️  No key entered. You can set it later with:
+    echo     setx OPENAI_API_KEY "sk-..."
+    goto after_set_openai_key
 )
+
+echo 🔐 Storing OPENAI_API_KEY for current user (you may need to reopen terminals)...
+setx OPENAI_API_KEY "%OPENAI_API_KEY%" >nul
+if errorlevel 1 (
+    echo ⚠️  Could not persist OPENAI_API_KEY. You can set it manually later with:
+    echo     setx OPENAI_API_KEY "%OPENAI_API_KEY%"
+) else (
+    echo ✅ OPENAI_API_KEY saved. New shells will inherit it.
+)
+
+:: Also set it for the current session so you can use it immediately
+set "OPENAI_API_KEY=%OPENAI_API_KEY%"
+echo ✅ OPENAI_API_KEY available for this session.
+
+:after_set_openai_key
+
+:skip_set_openai_key
 
 :: Create input and output directories
 if not exist "input_resumes" (
