@@ -6483,8 +6483,23 @@ class EnhancedHotelAIScreener:
                 "role_evidence_details": role_evidence_details,
                 "processed_at": datetime.now().isoformat(),
             })
-            logger.info(f"✅ {file_path.name}: {scoring_result['total_score']:.1%} - {scoring_result['recommendation']}")
-            return scoring_result
+            # Enrich result with identity/contact and summary fields expected by exporters/UI
+            enriched_result = dict(scoring_result)
+            enriched_result["candidate_name"] = candidate_info.get("name") or "Unknown"
+            # Keep original name field too for compatibility
+            enriched_result["name"] = enriched_result["candidate_name"]
+            enriched_result["email"] = candidate_info.get("email", "Not found")
+            enriched_result["phone"] = candidate_info.get("phone", "Not found")
+            enriched_result["location"] = candidate_info.get("location", "Not specified")
+            enriched_result["file_name"] = file_path.name
+            enriched_result["file_path"] = str(file_path)
+            # Flatten key analysis summaries
+            enriched_result["skills_found"] = list(skill_analysis.get("skills", []))
+            enriched_result["experience_years"] = experience_analysis.get("total_years", 0)
+            enriched_result["experience_quality"] = experience_analysis.get("experience_quality", "Unknown")
+
+            logger.info(f"✅ {file_path.name}: {enriched_result['total_score']:.1%} - {enriched_result['recommendation']}")
+            return enriched_result
             
         except Exception as e:
             logger.error(f"❌ Error processing {file_path.name}: {e}")
