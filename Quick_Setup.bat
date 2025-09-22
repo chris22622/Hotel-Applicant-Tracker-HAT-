@@ -82,6 +82,28 @@ if not errorlevel 1 (
     echo ⚠️  ChatGPT client install failed - LLM features will be disabled
 )
 
+:: Optional helpers for better text extraction
+choice /C YN /N /M "Install extra text extractors (docx2txt, textract)? [Y/N]: "
+if errorlevel 2 goto skip_text_helpers
+python -m pip install docx2txt textract --quiet
+if not errorlevel 1 (
+    echo ✅ Extra text extractors installed
+) else (
+    echo ⚠️  Extra text extractors install failed (optional)
+)
+:skip_text_helpers
+
+:: Optional embeddings (sentence-transformers)
+choice /C YN /N /M "Install embeddings package (sentence-transformers)? [Y/N]: "
+if errorlevel 2 goto skip_embeddings
+python -m pip install sentence-transformers --quiet
+if not errorlevel 1 (
+    echo ✅ Embeddings package installed
+) else (
+    echo ⚠️  Embeddings package install failed (optional)
+)
+:skip_embeddings
+
 :: Prompt to set OPENAI_API_KEY persistently (Windows only)
 echo.
 echo Would you like to set your OpenAI API key now for LLM features?
@@ -168,4 +190,5 @@ echo For OCR support (scanned PDFs/images):
 echo - Download Tesseract OCR from: https://github.com/UB-Mannheim/tesseract/wiki
 echo - Add it to your system PATH
 echo.
-pause
+echo Press any key to close this window...
+pause >nul

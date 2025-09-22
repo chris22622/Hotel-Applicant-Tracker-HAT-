@@ -6750,6 +6750,29 @@ class EnhancedHotelAIScreener:
                             alt_text = _bytes.decode('utf-8', errors='ignore')
                     except Exception:
                         pass
+                # Fallback 3: OCR images embedded in DOCX if still weak
+                if (
+                    file_ext == '.docx'
+                    and ocr_available
+                    and not getattr(self, 'disable_ocr', False)
+                    and not getattr(self, 'fast_mode', False)
+                    and len((primary_text + alt_text).strip()) < 40
+                ):
+                    try:
+                        import zipfile
+                        with zipfile.ZipFile(file_path, 'r') as z:
+                            image_names = [n for n in z.namelist() if n.startswith('word/media/')]
+                            max_imgs = getattr(self, 'ocr_max_pages', 2) or 2
+                            for name in image_names[:max_imgs]:
+                                try:
+                                    data = z.read(name)
+                                    from io import BytesIO
+                                    img = Image.open(BytesIO(data))
+                                    ocr_text += pytesseract.image_to_string(img) + "\n"
+                                except Exception:
+                                    continue
+                    except Exception:
+                        pass
                 # Fallback 3: naive RTF stripper if file actually contains RTF content
                 if len((primary_text + alt_text).strip()) < 40:
                     try:
