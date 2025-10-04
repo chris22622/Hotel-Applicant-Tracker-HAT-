@@ -82,14 +82,16 @@ if not errorlevel 1 (
     echo ⚠️  ChatGPT client install failed - LLM features will be disabled
 )
 
-:: Optional helpers for better text extraction
-choice /C YN /N /M "Install extra text extractors (docx2txt, textract)? [Y/N]: "
+:: Optional helper for better DOCX extraction (safe with modern pip)
+choice /C YN /N /M "Install extra text extractor (docx2txt)? [Y/N]: "
 if errorlevel 2 goto skip_text_helpers
-python -m pip install docx2txt textract --quiet
+python -m pip install docx2txt --quiet
 if not errorlevel 1 (
-    echo ✅ Extra text extractors installed
+    echo ✅ docx2txt installed
+    echo ℹ️  Note: Legacy .doc files are not fully supported without additional tools.
+    echo ℹ️  This app will still try PDF text extraction, RTF stripping, or OCR fallbacks when possible.
 ) else (
-    echo ⚠️  Extra text extractors install failed (optional)
+    echo ⚠️  docx2txt install failed (optional)
 )
 :skip_text_helpers
 
