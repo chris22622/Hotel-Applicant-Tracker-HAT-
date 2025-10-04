@@ -205,6 +205,20 @@ class EnhancedHotelAIScreener:
         except Exception:
             self._llm_chunk_chars = 6000
 
+        # Resilience controls to avoid long retry storms
+        try:
+            self._llm_max_retries: int = int(self._llm_cfg.get('max_retries', 0))
+        except Exception:
+            self._llm_max_retries = 0
+        self._llm_disable_on_error: bool = str(self._llm_cfg.get('disable_on_error', 'true')).strip().lower() in ('1','true','yes','on')
+        fb = self._llm_cfg.get('fallback_model')
+        self._llm_fallback_models: List[str] = []
+        if isinstance(fb, str) and fb:
+            self._llm_fallback_models.append(fb)
+        for m in ('gpt-4o', 'gpt-4.1-mini'):
+            if m != self._llm_model and m not in self._llm_fallback_models:
+                self._llm_fallback_models.append(m)
+
         # LLM cache and client
         self._llm_cache_path = Path("var") / "llm_full_cache.json"
         self._llm_cache: Dict[str, Any] = {}
@@ -7054,23 +7068,31 @@ class EnhancedHotelAIScreener:
             "years_mentions (list of strings), evidence (list of <=3 short quotes)."
         )
         user = {"position": position, "resume_chunk": chunk[: self._llm_chunk_chars]}
-        try:
-            resp = self._llm_client.chat.completions.create(
-                model=self._llm_model,
-                messages=[{"role": "system", "content": sys}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
-                temperature=self._llm_temperature,
-                timeout=self._llm_timeout,
-            )
-            content = (resp.choices[0].message.content or "") if resp and resp.choices else ""
+        models_to_try = [self._llm_model] + [m for m in self._llm_fallback_models if m]
+        for mdl in models_to_try:
             try:
-                return json.loads(content)
-            except Exception:
-                start = content.find("{")
-                end = content.rfind("}")
-                if start != -1 and end != -1 and end > start:
-                    return json.loads(content[start:end+1])
-        except Exception:
-            return {}
+                resp = self._llm_client.chat.completions.create(
+                    model=mdl,
+                    messages=[{"role": "system", "content": sys}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
+                    temperature=self._llm_temperature,
+                    timeout=self._llm_timeout,
+                )
+                content = (resp.choices[0].message.content or "") if resp and resp.choices else ""
+                try:
+                    return json.loads(content)
+                except Exception:
+                    start = content.find("{")
+                    end = content.rfind("}")
+                    if start != -1 and end != -1 and end > start:
+                        return json.loads(content[start:end+1])
+            except Exception as e:
+                logger.debug(f"LLM single-chunk eval failed on model {mdl}: {e}")
+                continue
+        if self._llm_disable_on_error:
+            logger.warning("🛑 Disabling LLM full review due to repeated single-chunk errors.")
+            self._llm_client = None
+            self._llm_full_review_enabled = False
+        return {}
         return {}
 
     def _llm_eval_candidate_full(self, position: str, resume_text: str, jd_text: str) -> Optional[Dict[str, Any]]:
@@ -7086,28 +7108,36 @@ class EnhancedHotelAIScreener:
                 "Return strict JSON with keys: score (0-100), reason (<=240 chars)."
             )
             user = {"position": position, "job_description": jd_text, "resume_text": chunks[0]}
-            try:
-                resp = self._llm_client.chat.completions.create(
-                    model=self._llm_model,
-                    messages=[{"role": "system", "content": sys}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
-                    temperature=self._llm_temperature,
-                    timeout=self._llm_timeout,
-                )
-                content = (resp.choices[0].message.content or "") if resp and resp.choices else ""
-                data = None
+            models_to_try = [self._llm_model] + [m for m in self._llm_fallback_models if m]
+            for mdl in models_to_try:
                 try:
-                    data = json.loads(content)
-                except Exception:
-                    start = content.find("{")
-                    end = content.rfind("}")
-                    if start != -1 and end != -1 and end > start:
-                        data = json.loads(content[start:end+1])
-                if isinstance(data, dict) and "score" in data:
-                    data["score"] = float(data.get("score", 0))
-                    data["reason"] = str(data.get("reason", ""))[:400]
-                    return data
-            except Exception:
-                return None
+                    resp = self._llm_client.chat.completions.create(
+                        model=mdl,
+                        messages=[{"role": "system", "content": sys}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
+                        temperature=self._llm_temperature,
+                        timeout=self._llm_timeout,
+                    )
+                    content = (resp.choices[0].message.content or "") if resp and resp.choices else ""
+                    data = None
+                    try:
+                        data = json.loads(content)
+                    except Exception:
+                        start = content.find("{")
+                        end = content.rfind("}")
+                        if start != -1 and end != -1 and end > start:
+                            data = json.loads(content[start:end+1])
+                    if isinstance(data, dict) and "score" in data:
+                        data["score"] = float(data.get("score", 0))
+                        data["reason"] = str(data.get("reason", ""))[:400]
+                        return data
+                except Exception as e:
+                    logger.debug(f"LLM single-chunk scoring failed on model {mdl}: {e}")
+                    continue
+            if self._llm_disable_on_error:
+                logger.warning("🛑 Disabling LLM full review due to repeated single-chunk scoring errors.")
+                self._llm_client = None
+                self._llm_full_review_enabled = False
+            return None
             return None
 
         # Multi-chunk: map then reduce
@@ -7129,28 +7159,36 @@ class EnhancedHotelAIScreener:
             "Return strict JSON: { score: 0-100, reason: '<=240 chars' }."
         )
         user = {"position": position, "job_description": jd_text, "evidence_summaries": summaries}
-        try:
-            resp = self._llm_client.chat.completions.create(
-                model=self._llm_model,
-                messages=[{"role": "system", "content": sys}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
-                temperature=self._llm_temperature,
-                timeout=self._llm_timeout,
-            )
-            content = (resp.choices[0].message.content or "") if resp and resp.choices else ""
-            data = None
+        models_to_try = [self._llm_model] + [m for m in self._llm_fallback_models if m]
+        for mdl in models_to_try:
             try:
-                data = json.loads(content)
-            except Exception:
-                start = content.find("{")
-                end = content.rfind("}")
-                if start != -1 and end != -1 and end > start:
-                    data = json.loads(content[start:end+1])
-            if isinstance(data, dict) and "score" in data:
-                data["score"] = float(data.get("score", 0))
-                data["reason"] = str(data.get("reason", ""))[:400]
-                return data
-        except Exception:
-            return None
+                resp = self._llm_client.chat.completions.create(
+                    model=mdl,
+                    messages=[{"role": "system", "content": sys}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
+                    temperature=self._llm_temperature,
+                    timeout=self._llm_timeout,
+                )
+                content = (resp.choices[0].message.content or "") if resp and resp.choices else ""
+                data = None
+                try:
+                    data = json.loads(content)
+                except Exception:
+                    start = content.find("{")
+                    end = content.rfind("}")
+                    if start != -1 and end != -1 and end > start:
+                        data = json.loads(content[start:end+1])
+                if isinstance(data, dict) and "score" in data:
+                    data["score"] = float(data.get("score", 0))
+                    data["reason"] = str(data.get("reason", ""))[:400]
+                    return data
+            except Exception as e:
+                logger.debug(f"LLM reduce step failed on model {mdl}: {e}")
+                continue
+        if self._llm_disable_on_error:
+            logger.warning("🛑 Disabling LLM full review due to repeated reduce-step errors.")
+            self._llm_client = None
+            self._llm_full_review_enabled = False
+        return None
         return None
 
     def _extract_candidate_info(self, text: str) -> Dict[str, Any]:
@@ -7388,46 +7426,56 @@ class EnhancedHotelAIScreener:
             else:
                 logger.info("🔎 Strict role filter not enforced (insufficient explicit matches); returning unfiltered results")
         
-            # Optional LLM full-text review re-ranking
-            if getattr(self, "_llm_full_review_enabled", False) and getattr(self, "_llm_client", None) and candidates:
-                logger.info("🧠 Running LLM full-text review for all candidates (ChatGPT)")
-                jd_text = self._build_jd_text(position)
-                for c in candidates:
-                    try:
-                        resume_text = c.get("resume_text") or ""
-                        if not resume_text:
-                            continue
-                        payload = {
-                            "pos": position,
-                            "model": getattr(self, "_llm_model", "gpt-4o-mini"),
-                            "text_hash": hashlib.md5(resume_text.encode('utf-8')).hexdigest(),
-                            "jd_hash": hashlib.md5(jd_text.encode('utf-8')).hexdigest(),
-                        }
-                        ck = self._llm_cache_key(payload)
-                        result = self._llm_cache.get(ck)
-                        if not result:
-                            result = self._llm_eval_candidate_full(position, resume_text, jd_text)
-                            if result:
-                                self._llm_cache[ck] = result
-                                try:
-                                    self._llm_cache_path.write_text(json.dumps(self._llm_cache, ensure_ascii=False, indent=2), encoding='utf-8')
-                                except Exception:
-                                    pass
-                        if result:
-                            c["llm_full_score"] = float(result.get("score", 0))
-                            c["llm_full_reason"] = str(result.get("reason", ""))
-                            c["llm_full_read"] = True
-                    except Exception:
+        # Optional LLM full-text review re-ranking (outside strict filter block)
+        if getattr(self, "_llm_full_review_enabled", False) and getattr(self, "_llm_client", None) and candidates:
+            logger.info("🧠 Running LLM full-text review for all candidates (ChatGPT)")
+            jd_text = self._build_jd_text(position)
+            failures = 0
+            for c in candidates:
+                try:
+                    resume_text = c.get("resume_text") or ""
+                    if not resume_text:
                         continue
+                    payload = {
+                        "pos": position,
+                        "model": getattr(self, "_llm_model", "gpt-4o-mini"),
+                        "text_hash": hashlib.md5(resume_text.encode('utf-8')).hexdigest(),
+                        "jd_hash": hashlib.md5(jd_text.encode('utf-8')).hexdigest(),
+                    }
+                    ck = self._llm_cache_key(payload)
+                    result = self._llm_cache.get(ck)
+                    if not result:
+                        result = self._llm_eval_candidate_full(position, resume_text, jd_text)
+                        if result:
+                            self._llm_cache[ck] = result
+                            try:
+                                self._llm_cache_path.write_text(json.dumps(self._llm_cache, ensure_ascii=False, indent=2), encoding='utf-8')
+                            except Exception:
+                                pass
+                    if result:
+                        c["llm_full_score"] = float(result.get("score", 0))
+                        c["llm_full_reason"] = str(result.get("reason", ""))
+                        c["llm_full_read"] = True
+                    else:
+                        failures += 1
+                except Exception as e:
+                    logger.debug(f"LLM full-review error: {e}")
+                    failures += 1
+                    continue
 
-                # Sort by LLM score if present, otherwise fallback to traditional score
-                if any("llm_full_score" in c for c in candidates):
-                    candidates.sort(key=lambda x: x.get("llm_full_score", 0.0), reverse=True)
-                else:
-                    candidates.sort(key=lambda x: x["total_score"], reverse=True)
+            if failures >= max(1, int(0.5 * len(candidates))) and getattr(self, "_llm_disable_on_error", False):
+                logger.warning("🛑 Disabling LLM for this run due to repeated request failures.")
+                self._llm_client = None
+                self._llm_full_review_enabled = False
+
+            # Sort by LLM score if present, otherwise fallback to traditional score
+            if any("llm_full_score" in c for c in candidates):
+                candidates.sort(key=lambda x: x.get("llm_full_score", 0.0), reverse=True)
             else:
-                # Sort by score (highest first)
                 candidates.sort(key=lambda x: x["total_score"], reverse=True)
+        else:
+            # Sort by score (highest first)
+            candidates.sort(key=lambda x: x["total_score"], reverse=True)
         
         # Limit results if specified
         if max_candidates:
