@@ -177,6 +177,20 @@ docker run -p 8501:8501 hotel-ats
 
 ### Local Installation
 ```bash
+## 🔄 One-Click Update
+
+To update to the latest version without manual steps:
+
+1. Double-click `Update_HAT.bat` (Windows)
+  - Stashes local changes temporarily
+  - Pulls latest from GitHub (origin/main)
+  - Reactivates your `.venv` and syncs dependencies
+  - Restores your local changes (if possible)
+
+If you haven’t set up yet, run `Quick_Setup.bat` first.
+
+---
+
 git clone https://github.com/chris22622/Hotel-Applicant-Tracker-HAT-.git
 cd Hotel-Applicant-Tracker-HAT-
 python -m venv .venv && .venv\Scripts\activate
