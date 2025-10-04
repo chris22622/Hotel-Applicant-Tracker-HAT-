@@ -87,6 +87,20 @@ if not errorlevel 1 (
         echo ⚠️  OpenAI client install failed - LLM features may be disabled
     )
 
+:: Create secrets file template for API key if missing
+if not exist "config" (
+    mkdir config
+)
+if not exist "config\openai_api_key.txt" (
+    echo 📝 Creating config\openai_api_key.txt template...
+    (
+        echo # Paste your OpenAI API key on a single line below. Do not commit this file.
+        echo # Example: sk-abc123...
+        echo PUT_YOUR_KEY_HERE
+    ) > "config\openai_api_key.txt"
+    echo 👉 Open config\openai_api_key.txt and paste your API key to enable ChatGPT full review.
+)
+
 :: Create input and output directories
 if not exist "input_resumes" (
     mkdir input_resumes

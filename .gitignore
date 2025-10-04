@@ -89,3 +89,5 @@ Thumbs.db
 # Local configuration
 config.local.yaml
 .env.local
+config/openai_api_key.txt
+config/secrets.yaml

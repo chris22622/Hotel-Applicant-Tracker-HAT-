@@ -6938,9 +6938,61 @@ class EnhancedHotelAIScreener:
             return {"token_count": 0, "unique_token_ratio": 0.0, "length_flag": False, "diversity_flag": False, "low_information": False, "sections_detected": 0}
     
     # ---------------- LLM Full-Text Review (Optional) -----------------
+    def _get_openai_api_key(self) -> Optional[str]:
+        """Resolve OpenAI API key from env, config, or .env without hard-coding secrets.
+
+        Search order:
+        1) Environment variable OPENAI_API_KEY
+        2) File config/openai_api_key.txt (single-line key)
+        3) YAML file config/secrets.yaml (keys: llm.openai_api_key or openai_api_key)
+        4) .env file in project root (line OPENAI_API_KEY=...)
+        """
+        # 1) Env
+        key = os.environ.get("OPENAI_API_KEY")
+        if key:
+            return key.strip()
+        # 2) Text file
+        try:
+            fp = Path("config") / "openai_api_key.txt"
+            if fp.exists():
+                txt = fp.read_text(encoding="utf-8", errors="ignore").strip()
+                if txt and "PUT_YOUR_KEY_HERE" not in txt:
+                    return txt
+        except Exception:
+            pass
+        # 3) YAML secrets
+        try:
+            yfp = Path("config") / "secrets.yaml"
+            if yfp.exists():
+                data = yaml.safe_load(yfp.read_text(encoding="utf-8", errors="ignore")) or {}
+                if isinstance(data, dict):
+                    # Try nested llm key first
+                    llm = data.get("llm") or {}
+                    if isinstance(llm, dict) and llm.get("openai_api_key"):
+                        return str(llm["openai_api_key"]).strip()
+                    if data.get("openai_api_key"):
+                        return str(data["openai_api_key"]).strip()
+        except Exception:
+            pass
+        # 4) .env simple parse (avoid requiring python-dotenv)
+        try:
+            envp = Path(".env")
+            if envp.exists():
+                for line in envp.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if line.upper().startswith("OPENAI_API_KEY="):
+                        val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        if val:
+                            return val
+        except Exception:
+            pass
+        return None
+
     def _init_llm_client(self):
         """Initialize OpenAI client if available and key present."""
-        api_key = os.environ.get("OPENAI_API_KEY")
+        api_key = self._get_openai_api_key()
         if not (_OPENAI_OK and api_key):
             return None
         try:
