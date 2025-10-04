@@ -1,0 +1,17 @@
+# Scoring and LLM configuration for Enhanced Hotel AI Screener
+
+# Enable LLM full-text review so ChatGPT reads every resume and re-ranks results
+llm:
+  full_review_enabled: true
+  # Model and runtime settings
+  model: gpt-4o-mini
+  temperature: 0.1
+  timeout: 45          # seconds
+  chunk_chars: 6000    # characters per chunk for long resumes
+
+# Optional: adjust category weights globally (will be normalized)
+# weights:
+#   experience: 0.35
+#   skills: 0.30
+#   cultural_fit: 0.20
+#   hospitality: 0.15

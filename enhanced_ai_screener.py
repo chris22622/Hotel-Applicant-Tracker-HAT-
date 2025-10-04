@@ -54,6 +54,14 @@ except ImportError:
     sklearn_available = False
     logger.warning("⚠️ Advanced text analysis not available")
 
+# Optional LLM client (OpenAI) for full resume review
+try:
+    from openai import OpenAI  # type: ignore
+    _OPENAI_OK = True
+except Exception:
+    OpenAI = None  # type: ignore
+    _OPENAI_OK = False
+
 
 SCORING_VERSION = "4.0.0"
 
@@ -178,6 +186,37 @@ class EnhancedHotelAIScreener:
             logger.info("🛑 OCR disabled by config")
         if self.max_files > 0:
             logger.info(f"📦 File cap per run: {self.max_files}")
+
+        # Optional: LLM full-text review settings
+        self._llm_cfg = (self._config.get("llm") or {}) if hasattr(self, "_config") else {}
+        env_flag = str(os.getenv('HAT_LLM_FULL_REVIEW', self._llm_cfg.get('full_review_enabled', '0'))).strip().lower()
+        self._llm_full_review_enabled: bool = env_flag in ('1','true','yes','on')
+        self._llm_model: str = str(self._llm_cfg.get('model', 'gpt-4o-mini'))
+        try:
+            self._llm_temperature: float = float(self._llm_cfg.get('temperature', 0.1))
+        except Exception:
+            self._llm_temperature = 0.1
+        try:
+            self._llm_timeout: int = int(self._llm_cfg.get('timeout', 45))
+        except Exception:
+            self._llm_timeout = 45
+        try:
+            self._llm_chunk_chars: int = int(self._llm_cfg.get('chunk_chars', 6000))
+        except Exception:
+            self._llm_chunk_chars = 6000
+
+        # LLM cache and client
+        self._llm_cache_path = Path("var") / "llm_full_cache.json"
+        self._llm_cache: Dict[str, Any] = {}
+        try:
+            self._llm_cache_path.parent.mkdir(parents=True, exist_ok=True)
+            if self._llm_cache_path.exists():
+                self._llm_cache = json.loads(self._llm_cache_path.read_text(encoding='utf-8'))
+        except Exception:
+            self._llm_cache = {}
+        self._llm_client = self._init_llm_client() if self._llm_full_review_enabled else None
+        if self._llm_full_review_enabled and not self._llm_client:
+            logger.warning("⚠️ LLM full review enabled but OpenAI client not available. Set OPENAI_API_KEY or disable the feature.")
 
     # ---------------- Metrics & Benchmarks -----------------
     def _metrics_dir(self) -> Path:
@@ -6493,6 +6532,8 @@ class EnhancedHotelAIScreener:
             enriched_result["location"] = candidate_info.get("location", "Not specified")
             enriched_result["file_name"] = file_path.name
             enriched_result["file_path"] = str(file_path)
+            # Preserve full resume text for optional LLM full-review
+            enriched_result["resume_text"] = text
             # Flatten key analysis summaries
             enriched_result["skills_found"] = list(skill_analysis.get("skills", []))
             enriched_result["experience_years"] = experience_analysis.get("total_years", 0)
@@ -6866,6 +6907,170 @@ class EnhancedHotelAIScreener:
         except Exception:
             return {"token_count": 0, "unique_token_ratio": 0.0, "length_flag": False, "diversity_flag": False, "low_information": False, "sections_detected": 0}
     
+    # ---------------- LLM Full-Text Review (Optional) -----------------
+    def _init_llm_client(self):
+        """Initialize OpenAI client if available and key present."""
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not (_OPENAI_OK and api_key):
+            return None
+        try:
+            return OpenAI(api_key=api_key)
+        except Exception:
+            return None
+
+    def _llm_cache_key(self, payload: Dict[str, Any]) -> str:
+        try:
+            s = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+        except Exception:
+            s = str(payload)
+        return hashlib.sha1(s.encode('utf-8')).hexdigest()
+
+    def _llm_chunk_text(self, text: str) -> List[str]:
+        txt = (text or "").strip()
+        if not txt:
+            return []
+        max_chars = max(1000, int(self._llm_chunk_chars))
+        if len(txt) <= max_chars:
+            return [txt]
+        chunks: List[str] = []
+        start = 0
+        while start < len(txt):
+            end = min(len(txt), start + max_chars)
+            chunks.append(txt[start:end])
+            start = end
+        return chunks
+
+    def _build_jd_text(self, position: str) -> str:
+        # Prefer raw job description text if available
+        try:
+            if hasattr(self, "_jd_raw_texts") and isinstance(self._jd_raw_texts, dict):
+                jd = self._jd_raw_texts.get(position)
+                if jd:
+                    return str(jd)[:5000]
+        except Exception:
+            pass
+        # Fallback: synthesize JD text from position intelligence
+        pdict = self.position_intelligence.get(position, {})
+        parts = [f"Position: {position}"]
+        def add(label: str, key: str, cap: int = 30):
+            vals = [v for v in pdict.get(key, []) if isinstance(v, str)]
+            if vals:
+                parts.append(f"{label}: " + ", ".join(vals[:cap]))
+        add("Must Have", "must_have_skills")
+        add("Nice To Have", "nice_to_have_skills")
+        add("Technical", "technical_skills")
+        add("Experience Indicators", "experience_indicators")
+        return "\n".join(parts)[:5000]
+
+    def _llm_eval_single_chunk(self, chunk: str, position: str) -> Dict[str, Any]:
+        """Extract evidence from a single chunk. Best-effort; returns compact JSON dict."""
+        if not (self._llm_client and chunk):
+            return {}
+        sys = (
+            "You extract structured evidence from resume text for a hotel role. "
+            "Return concise JSON with keys: titles_found (list), skills_found (list), hospitality_terms (list), "
+            "years_mentions (list of strings), evidence (list of <=3 short quotes)."
+        )
+        user = {"position": position, "resume_chunk": chunk[: self._llm_chunk_chars]}
+        try:
+            resp = self._llm_client.chat.completions.create(
+                model=self._llm_model,
+                messages=[{"role": "system", "content": sys}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
+                temperature=self._llm_temperature,
+                timeout=self._llm_timeout,
+            )
+            content = (resp.choices[0].message.content or "") if resp and resp.choices else ""
+            try:
+                return json.loads(content)
+            except Exception:
+                start = content.find("{")
+                end = content.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    return json.loads(content[start:end+1])
+        except Exception:
+            return {}
+        return {}
+
+    def _llm_eval_candidate_full(self, position: str, resume_text: str, jd_text: str) -> Optional[Dict[str, Any]]:
+        """Evaluate a candidate by reading the entire resume text. Uses chunking if needed."""
+        if not (self._llm_client and resume_text):
+            return None
+
+        chunks = self._llm_chunk_text(resume_text)
+        if len(chunks) == 1:
+            sys = (
+                "You are an expert hospitality recruiter. Read the resume text thoroughly and score "
+                "fit for the given position based ONLY on the resume content (word-for-word). "
+                "Return strict JSON with keys: score (0-100), reason (<=240 chars)."
+            )
+            user = {"position": position, "job_description": jd_text, "resume_text": chunks[0]}
+            try:
+                resp = self._llm_client.chat.completions.create(
+                    model=self._llm_model,
+                    messages=[{"role": "system", "content": sys}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
+                    temperature=self._llm_temperature,
+                    timeout=self._llm_timeout,
+                )
+                content = (resp.choices[0].message.content or "") if resp and resp.choices else ""
+                data = None
+                try:
+                    data = json.loads(content)
+                except Exception:
+                    start = content.find("{")
+                    end = content.rfind("}")
+                    if start != -1 and end != -1 and end > start:
+                        data = json.loads(content[start:end+1])
+                if isinstance(data, dict) and "score" in data:
+                    data["score"] = float(data.get("score", 0))
+                    data["reason"] = str(data.get("reason", ""))[:400]
+                    return data
+            except Exception:
+                return None
+            return None
+
+        # Multi-chunk: map then reduce
+        summaries: List[Dict[str, Any]] = []
+        for ch in chunks:
+            ev = self._llm_eval_single_chunk(ch, position)
+            if ev:
+                summaries.append({
+                    "titles_found": ev.get("titles_found", [])[:5],
+                    "skills_found": ev.get("skills_found", [])[:10],
+                    "hospitality_terms": ev.get("hospitality_terms", [])[:10],
+                    "years_mentions": ev.get("years_mentions", [])[:5],
+                    "evidence": ev.get("evidence", [])[:3],
+                })
+
+        sys = (
+            "You are an expert hospitality recruiter. Aggregate the evidence summaries from ALL resume chunks "
+            "to produce a single final evaluation for the position. Assume the summaries cover the entire resume. "
+            "Return strict JSON: { score: 0-100, reason: '<=240 chars' }."
+        )
+        user = {"position": position, "job_description": jd_text, "evidence_summaries": summaries}
+        try:
+            resp = self._llm_client.chat.completions.create(
+                model=self._llm_model,
+                messages=[{"role": "system", "content": sys}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
+                temperature=self._llm_temperature,
+                timeout=self._llm_timeout,
+            )
+            content = (resp.choices[0].message.content or "") if resp and resp.choices else ""
+            data = None
+            try:
+                data = json.loads(content)
+            except Exception:
+                start = content.find("{")
+                end = content.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    data = json.loads(content[start:end+1])
+            if isinstance(data, dict) and "score" in data:
+                data["score"] = float(data.get("score", 0))
+                data["reason"] = str(data.get("reason", ""))[:400]
+                return data
+        except Exception:
+            return None
+        return None
+
     def _extract_candidate_info(self, text: str) -> Dict[str, Any]:
         """Extract basic candidate information from resume text."""
         info = {
@@ -7101,8 +7306,46 @@ class EnhancedHotelAIScreener:
             else:
                 logger.info("🔎 Strict role filter not enforced (insufficient explicit matches); returning unfiltered results")
         
-        # Sort by score (highest first)
-        candidates.sort(key=lambda x: x["total_score"], reverse=True)
+            # Optional LLM full-text review re-ranking
+            if getattr(self, "_llm_full_review_enabled", False) and getattr(self, "_llm_client", None) and candidates:
+                logger.info("🧠 Running LLM full-text review for all candidates (ChatGPT)")
+                jd_text = self._build_jd_text(position)
+                for c in candidates:
+                    try:
+                        resume_text = c.get("resume_text") or ""
+                        if not resume_text:
+                            continue
+                        payload = {
+                            "pos": position,
+                            "model": getattr(self, "_llm_model", "gpt-4o-mini"),
+                            "text_hash": hashlib.md5(resume_text.encode('utf-8')).hexdigest(),
+                            "jd_hash": hashlib.md5(jd_text.encode('utf-8')).hexdigest(),
+                        }
+                        ck = self._llm_cache_key(payload)
+                        result = self._llm_cache.get(ck)
+                        if not result:
+                            result = self._llm_eval_candidate_full(position, resume_text, jd_text)
+                            if result:
+                                self._llm_cache[ck] = result
+                                try:
+                                    self._llm_cache_path.write_text(json.dumps(self._llm_cache, ensure_ascii=False, indent=2), encoding='utf-8')
+                                except Exception:
+                                    pass
+                        if result:
+                            c["llm_full_score"] = float(result.get("score", 0))
+                            c["llm_full_reason"] = str(result.get("reason", ""))
+                            c["llm_full_read"] = True
+                    except Exception:
+                        continue
+
+                # Sort by LLM score if present, otherwise fallback to traditional score
+                if any("llm_full_score" in c for c in candidates):
+                    candidates.sort(key=lambda x: x.get("llm_full_score", 0.0), reverse=True)
+                else:
+                    candidates.sort(key=lambda x: x["total_score"], reverse=True)
+            else:
+                # Sort by score (highest first)
+                candidates.sort(key=lambda x: x["total_score"], reverse=True)
         
         # Limit results if specified
         if max_candidates:
