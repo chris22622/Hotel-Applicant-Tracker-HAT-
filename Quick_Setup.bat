@@ -41,7 +41,8 @@ if errorlevel 1 (
 
 :: Upgrade pip
 echo 📦 Upgrading pip...
-python -m pip install --upgrade pip --quiet
+REM Pin pip below 24.1 to avoid legacy package metadata issues (e.g., textract deps)
+python -m pip install --upgrade "pip<24.1" --quiet
 
 :: Install core requirements
 echo 📦 Installing core requirements...
@@ -63,8 +64,12 @@ if not errorlevel 1 (
 )
 
 :: Install OCR packages (optional)
-echo 📦 Installing OCR packages...
-python -m pip install pytesseract pdf2image PyPDF2 python-docx pillow --quiet
+echo 📦 Installing OCR & document packages...
+python -m pip install pytesseract pdf2image PyPDF2 python-docx pillow docx2txt --quiet
+REM On Windows, install pywin32 to enable .doc extraction via Word COM if available
+python -c "import platform,sys; sys.exit(0 if platform.system().lower().startswith('win') else 1)" || goto :skipwin
+python -m pip install pywin32 --quiet
+:skipwin
 if not errorlevel 1 (
     echo ✅ OCR support installed
     echo ℹ️  Note: You may need to install Tesseract OCR separately for image processing
@@ -73,70 +78,14 @@ if not errorlevel 1 (
     echo ⚠️  OCR packages failed - text files will work
 )
 
-:: Install OpenAI client for ChatGPT (recommended)
-echo 📦 Installing ChatGPT client (OpenAI SDK)...
-python -m pip install openai --quiet
-if not errorlevel 1 (
-    echo ✅ ChatGPT client installed
-) else (
-    echo ⚠️  ChatGPT client install failed - LLM features will be disabled
-)
-
-:: Optional helper for better DOCX extraction (safe with modern pip)
-choice /C YN /N /M "Install extra text extractor (docx2txt)? [Y/N]: "
-if errorlevel 2 goto skip_text_helpers
-python -m pip install docx2txt --quiet
-if not errorlevel 1 (
-    echo ✅ docx2txt installed
-    echo ℹ️  Note: Legacy .doc files are not fully supported without additional tools.
-    echo ℹ️  This app will still try PDF text extraction, RTF stripping, or OCR fallbacks when possible.
-) else (
-    echo ⚠️  docx2txt install failed (optional)
-)
-:skip_text_helpers
-
-:: Optional embeddings (sentence-transformers)
-choice /C YN /N /M "Install embeddings package (sentence-transformers)? [Y/N]: "
-if errorlevel 2 goto skip_embeddings
-python -m pip install sentence-transformers --quiet
-if not errorlevel 1 (
-    echo ✅ Embeddings package installed
-) else (
-    echo ⚠️  Embeddings package install failed (optional)
-)
-:skip_embeddings
-
-:: Prompt to set OPENAI_API_KEY persistently (Windows only)
-echo.
-echo Would you like to set your OpenAI API key now for LLM features?
-echo This will store it in your user environment and also set it for this session.
-choice /C YN /N /M "Set OPENAI_API_KEY now? [Y/N]: "
-if errorlevel 2 goto skip_set_openai_key
-
-set "OPENAI_API_KEY="
-set /p OPENAI_API_KEY="Enter your OpenAI API key (starts with sk-): "
-if "%OPENAI_API_KEY%"=="" (
-    echo ⚠️  No key entered. You can set it later with:
-    echo     setx OPENAI_API_KEY "sk-..."
-    goto after_set_openai_key
-)
-
-echo 🔐 Storing OPENAI_API_KEY for current user (you may need to reopen terminals)...
-setx OPENAI_API_KEY "%OPENAI_API_KEY%" >nul
-if errorlevel 1 (
-    echo ⚠️  Could not persist OPENAI_API_KEY. You can set it manually later with:
-    echo     setx OPENAI_API_KEY "%OPENAI_API_KEY%"
-) else (
-    echo ✅ OPENAI_API_KEY saved. New shells will inherit it.
-)
-
-:: Also set it for the current session so you can use it immediately
-set "OPENAI_API_KEY=%OPENAI_API_KEY%"
-echo ✅ OPENAI_API_KEY available for this session.
-
-:after_set_openai_key
-
-:skip_set_openai_key
+    :: Ensure OpenAI client is installed for ChatGPT full review
+    echo 📦 Installing ChatGPT client (OpenAI SDK)...
+    python -m pip install "openai>=1.40.0" --quiet
+    if not errorlevel 1 (
+        echo ✅ ChatGPT client installed
+    ) else (
+        echo ⚠️  OpenAI client install failed - LLM features may be disabled
+    )
 
 :: Create input and output directories
 if not exist "input_resumes" (
@@ -192,5 +141,4 @@ echo For OCR support (scanned PDFs/images):
 echo - Download Tesseract OCR from: https://github.com/UB-Mannheim/tesseract/wiki
 echo - Add it to your system PATH
 echo.
-echo Press any key to close this window...
-pause >nul
+pause

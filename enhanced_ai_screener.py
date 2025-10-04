@@ -6797,6 +6797,36 @@ class EnhancedHotelAIScreener:
                         alt_text = docx2txt.process(str(file_path)) or ""
                     except Exception:
                         pass
+                # Fallback 1b (Windows/.doc only): Use Word COM automation to export to text if available
+                if file_ext == '.doc' and len((primary_text + alt_text).strip()) < 40:
+                    try:
+                        import platform
+                        if platform.system().lower().startswith('win'):
+                            try:
+                                import win32com.client  # type: ignore
+                                tmp_txt = self._cache_dir() / (file_path.stem + "_export.txt")
+                                word = win32com.client.Dispatch("Word.Application")  # type: ignore
+                                word.Visible = False  # type: ignore
+                                doc_obj = word.Documents.Open(str(file_path))  # type: ignore
+                                # 7 = wdFormatText
+                                doc_obj.SaveAs(str(tmp_txt), FileFormat=7)  # type: ignore
+                                doc_obj.Close(False)  # type: ignore
+                                word.Quit()  # type: ignore
+                                try:
+                                    alt_text = tmp_txt.read_text(encoding='utf-8', errors='ignore')
+                                except Exception:
+                                    try:
+                                        alt_text = tmp_txt.read_text(errors='ignore')
+                                    except Exception:
+                                        alt_text = ""
+                                try:
+                                    tmp_txt.unlink(missing_ok=True)  # type: ignore
+                                except Exception:
+                                    pass
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
                 # Fallback 2: textract (can handle .doc/.docx when dependencies available)
                 if len((primary_text + alt_text).strip()) < 40:
                     try:
