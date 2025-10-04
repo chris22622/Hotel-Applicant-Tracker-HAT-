@@ -24,7 +24,11 @@ if errorlevel 1 (
   goto :end
 )
 
-:: Show current branch
+:: Detect if this is a Git working copy; if not, attempt conversion (zip → git)
+git rev-parse --is-inside-work-tree >nul 2>&1
+if errorlevel 1 goto :convert_to_git
+
+:: Show current branch/status
 echo Checking repository status...
 git status -sb
 
@@ -87,3 +91,59 @@ echo ❌ Git operation failed. Please check your network or repository status.
 popd
 endlocal
 pause
+
+:convert_to_git
+echo ⚠️  This folder is not a Git repository.
+echo     We'll convert it to a Git working copy so future updates are seamless.
+set REPO_URL=https://github.com/chris22622/Hotel-Applicant-Tracker-HAT-.git
+set TMP_ROOT=%TEMP%\hat_update_%RANDOM%%RANDOM%
+set TMP_REPO=%TMP_ROOT%\repo
+set BACKUP_DIR=%CD%\backups\update_%DATE:~10,4%%DATE:~4,2%%DATE:~7,2%_%TIME:~0,2%%TIME:~3,2%%TIME:~6,2%
+
+:: Normalize time with no spaces/colons
+set BACKUP_DIR=%BACKUP_DIR: =0%
+set BACKUP_DIR=%BACKUP_DIR::=%
+
+echo.
+echo Creating temporary workspace: %TMP_REPO%
+mkdir "%TMP_REPO%" >nul 2>&1
+if errorlevel 1 (
+  echo ❌ Could not create temporary directory.
+  goto :gitfail
+)
+
+echo ⬇️ Cloning latest repository snapshot...
+git clone --depth 1 "%REPO_URL%" "%TMP_REPO%"
+if errorlevel 1 (
+  echo ❌ Failed to clone repository from %REPO_URL%.
+  goto :gitfail
+)
+
+echo 💾 Backing up your local data to: %BACKUP_DIR%
+mkdir "%BACKUP_DIR%" >nul 2>&1
+
+:: Backup selected user data (best-effort)
+if exist "config" robocopy "config" "%BACKUP_DIR%\config" /E /NFL /NDL /NJH /NJS >nul
+if exist "hr_ats.db" copy /Y "hr_ats.db" "%BACKUP_DIR%\hr_ats.db" >nul
+if exist "input_resumes" robocopy "input_resumes" "%BACKUP_DIR%\input_resumes" /E /NFL /NDL /NJH /NJS >nul
+if exist "screening_results" robocopy "screening_results" "%BACKUP_DIR%\screening_results" /E /NFL /NDL /NJH /NJS >nul
+if exist "var" robocopy "var" "%BACKUP_DIR%\var" /E /NFL /NDL /NJH /NJS >nul
+if exist "plugins" robocopy "plugins" "%BACKUP_DIR%\plugins" /E /NFL /NDL /NJH /NJS >nul
+
+echo 🔁 Copying repository files into current folder (preserving your data)...
+:: Copy all repo files except .git and common local-only folders
+robocopy "%TMP_REPO%" "%CD%" /E /NFL /NDL /NJH /NJS /XD ".git" ".venv" "input_resumes" "screening_results" "var" /XF "config\openai_api_key.txt" "config\secrets.yaml" >nul
+
+:: Ensure .git metadata is present so future updates work with git
+if not exist ".git" (
+  echo 🧩 Installing Git metadata...
+  robocopy "%TMP_REPO%\.git" ".git" /E /NFL /NDL /NJH /NJS >nul
+)
+
+:: Restore secrets if they exist in backup
+if exist "%BACKUP_DIR%\config\openai_api_key.txt" copy /Y "%BACKUP_DIR%\config\openai_api_key.txt" "config\openai_api_key.txt" >nul
+if exist "%BACKUP_DIR%\config\secrets.yaml" copy /Y "%BACKUP_DIR%\config\secrets.yaml" "config\secrets.yaml" >nul
+
+echo ✅ Conversion complete. Proceeding with standard update...
+echo.
+goto :eof
