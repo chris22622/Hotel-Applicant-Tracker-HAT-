@@ -264,11 +264,27 @@ class EnhancedHotelAIScreener:
         except Exception:
             self._llm_max_chunks_per_resume = 2
         self._llm_show_cooldown_progress: bool = str(self._llm_cfg.get('show_cooldown_progress', 'true')).strip().lower() in ('1','true','yes','on')
+        # Rate-limit advanced controls
+        self._llm_dynamic_throttle: bool = str(self._llm_cfg.get('dynamic_throttle_on_429', 'true')).strip().lower() in ('1','true','yes','on')
+        try:
+            self._llm_min_requests_per_minute: float = float(self._llm_cfg.get('min_requests_per_minute', 1))
+        except Exception:
+            self._llm_min_requests_per_minute = 1.0
+        try:
+            self._llm_max_rl_events_before_abort: int = int(self._llm_cfg.get('max_rate_limit_events_before_abort', 3))
+        except Exception:
+            self._llm_max_rl_events_before_abort = 3
+        try:
+            self._llm_cooldown_progress_step: int = int(self._llm_cfg.get('cooldown_progress_step_secs', 5))
+        except Exception:
+            self._llm_cooldown_progress_step = 5
 
         self._llm_min_interval = 60.0 / self._llm_requests_per_minute if self._llm_requests_per_minute > 0 else 0.0
         self._llm_next_allowed_ts: float = 0.0
         self._llm_sema = threading.Semaphore(max(1, self._llm_max_concurrent))
         self._llm_last_status: Optional[int] = None
+        self._llm_rl_events_run: int = 0
+        self._llm_abort_due_to_rl: bool = False
 
         # LLM metrics
         self._llm_metrics: Dict[str, Any] = {
@@ -7164,17 +7180,34 @@ class EnhancedHotelAIScreener:
                     sleep_secs = cool + random.randint(0, min(10, cool))
                     self._llm_metrics["rate_limit_events"] += 1
                     self._llm_metrics["cooldown_seconds"] += sleep_secs
+                    self._llm_rl_events_run += 1
+                    # Dynamic throttle to reduce RPM under pressure
+                    if self._llm_dynamic_throttle and self._llm_requests_per_minute > self._llm_min_requests_per_minute:
+                        new_rpm = max(self._llm_min_requests_per_minute, float(int(self._llm_requests_per_minute // 2) or 1))
+                        if new_rpm < self._llm_requests_per_minute:
+                            self._llm_requests_per_minute = new_rpm
+                            self._llm_min_interval = 60.0 / self._llm_requests_per_minute
+                            logger.info(f"🪫 Throttling LLM to {self._llm_requests_per_minute:.0f} req/min due to rate limits.")
                     logger.info(f"⏳ Rate limited (429). Cooling down for {sleep_secs}s before retry...")
                     if self._llm_show_cooldown_progress:
                         try:
-                            for remaining in range(sleep_secs, 0, -1):
+                            step = max(1, int(self._llm_cooldown_progress_step or 5))
+                            remaining = sleep_secs
+                            while remaining > 0:
                                 mins, secs = divmod(remaining, 60)
                                 logger.info(f"  ⏳ Cooldown: {mins:02d}:{secs:02d} remaining…")
-                                time.sleep(1)
+                                tick = min(step, remaining)
+                                time.sleep(tick)
+                                remaining -= tick
                         except Exception:
                             time.sleep(sleep_secs)
                     else:
                         time.sleep(sleep_secs)
+                    # Abort LLM for this run if too many rate limits
+                    if self._llm_rl_events_run >= max(1, int(self._llm_max_rl_events_before_abort)):
+                        logger.warning("🛑 Too many rate-limit events. Aborting LLM for the remainder of this run.")
+                        self._llm_abort_due_to_rl = True
+                        raise e
                     try:
                         self._llm_metrics["calls_total"] += 1
                         resp = self._llm_client.chat.completions.create(
@@ -7639,11 +7672,14 @@ class EnhancedHotelAIScreener:
                 logger.info("🔎 Strict role filter not enforced (insufficient explicit matches); returning unfiltered results")
         
         # Optional LLM full-text review re-ranking (outside strict filter block)
-        if getattr(self, "_llm_full_review_enabled", False) and getattr(self, "_llm_client", None) and candidates:
+        if getattr(self, "_llm_full_review_enabled", False) and getattr(self, "_llm_client", None) and candidates and not getattr(self, "_llm_abort_due_to_rl", False):
             logger.info("🧠 Running LLM full-text review for all candidates (ChatGPT)")
             jd_text = self._build_jd_text(position)
             failures = 0
             for c in candidates:
+                if getattr(self, "_llm_abort_due_to_rl", False):
+                    logger.info("⏭️ LLM aborted for run; skipping remaining candidates.")
+                    break
                 try:
                     resume_text = c.get("resume_text") or ""
                     if not resume_text:
