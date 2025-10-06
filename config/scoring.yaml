@@ -24,6 +24,10 @@ llm:
   stable_window_secs: 90
   cooldown_progress_step_secs: 5
   persist_rpm: true
+  # Batch ranking (reduces API calls and rate limits)
+  batch_mode_enabled: true
+  batch_size: 5
+  snippet_chars: 1000
 
 # Optional: adjust category weights globally (will be normalized)
 # weights:

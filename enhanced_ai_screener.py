@@ -303,6 +303,30 @@ class EnhancedHotelAIScreener:
         self._llm_last_ramp_ts: float = 0.0
         self._llm_rpm_start: float = float(self._llm_requests_per_minute)
 
+        # Batch ranking settings (reduce number of API calls)
+        try:
+            self._llm_batch_enabled: bool = bool(str(self._llm_cfg.get('batch_mode_enabled', 'true')).strip().lower() in ('1','true','yes','on'))
+        except Exception:
+            self._llm_batch_enabled = True
+        try:
+            self._llm_batch_size: int = int(self._llm_cfg.get('batch_size', 5))
+        except Exception:
+            self._llm_batch_size = 5
+        try:
+            self._llm_snippet_chars: int = int(self._llm_cfg.get('snippet_chars', 1000))
+        except Exception:
+            self._llm_snippet_chars = 1000
+        try:
+            self._llm_batch_only_over: int = int(self._llm_cfg.get('batch_only_over', 10))
+        except Exception:
+            self._llm_batch_only_over = 10
+        try:
+            self._llm_top_n: int = int(self._llm_cfg.get('top_n', 20))
+        except Exception:
+            self._llm_top_n = 20
+        # Abort policy on repeated rate-limits
+        self._llm_abort_on_rate_limit: bool = str(self._llm_cfg.get('abort_on_rate_limit', 'false')).strip().lower() in ('1','true','yes','on')
+
         # Persist/restore learned RPM across runs
         self._llm_persist_rpm: bool = str(self._llm_cfg.get('persist_rpm', 'true')).strip().lower() in ('1','true','yes','on')
         self._llm_state_path = Path("var") / "llm_state.json"
@@ -7337,6 +7361,77 @@ class EnhancedHotelAIScreener:
         add("Experience Indicators", "experience_indicators")
         return "\n".join(parts)[:5000]
 
+    def _candidate_snippet(self, cand: Dict[str, Any]) -> str:
+        """Build a compact snippet for batch ranking (local, no extra API calls)."""
+        txt = (cand.get('resume_text') or '').strip()
+        if not txt:
+            return ''
+        # Prefer first page/summary-ish region and some skills lines
+        snippet = txt[: self._llm_snippet_chars]
+        return snippet
+
+    def _llm_rank_batch(self, position: str, jd_text: str, batch: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        """Ask the LLM to score a batch of candidates in a single call.
+
+        Returns mapping id -> {score, reason} where id is the provided batch index key.
+        """
+        if not (self._llm_client and batch):
+            return {}
+        # Build payload
+        items = []
+        for idx, c in enumerate(batch):
+            cid = str(c.get('id') or idx)
+            items.append({
+                'id': cid,
+                'name': c.get('candidate_name') or c.get('file_name') or f'cand_{cid}',
+                'snippet': self._candidate_snippet(c),
+            })
+        sys = (
+            "You are an expert hospitality recruiter. Given a job description and multiple candidates' resume snippets, "
+            "score each candidate's fit strictly based on the provided text only. Return compact JSON array where each item is "
+            "{id: string, score: 0-100, reason: string<=200}."
+        )
+        user = {
+            'position': position,
+            'job_description': jd_text,
+            'candidates': items,
+        }
+        models_to_try = [self._llm_model] + [m for m in self._llm_fallback_models if m]
+        for mdl in models_to_try:
+            try:
+                resp = self._llm_gate_and_call(
+                    model=mdl,
+                    messages=[{"role": "system", "content": sys}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
+                    temperature=self._llm_temperature,
+                    timeout=self._llm_timeout,
+                )
+                content = (resp.choices[0].message.content or "") if resp and resp.choices else ""
+                data = None
+                try:
+                    data = json.loads(content)
+                except Exception:
+                    start = content.find("[")
+                    end = content.rfind("]")
+                    if start != -1 and end != -1 and end > start:
+                        data = json.loads(content[start:end+1])
+                result: Dict[str, Dict[str, Any]] = {}
+                if isinstance(data, list):
+                    for it in data:
+                        if isinstance(it, dict) and 'id' in it:
+                            try:
+                                result[str(it['id'])] = {
+                                    'score': float(it.get('score', 0)),
+                                    'reason': str(it.get('reason', ''))[:300]
+                                }
+                            except Exception:
+                                continue
+                    if result:
+                        return result
+            except Exception as e:
+                logger.debug(f"LLM batch ranking failed on model {mdl}: {e}")
+                continue
+        return {}
+
     def _llm_eval_single_chunk(self, chunk: str, position: str) -> Dict[str, Any]:
         """Extract evidence from a single chunk. Best-effort; returns compact JSON dict."""
         if not (self._llm_client and chunk):
@@ -7747,60 +7842,104 @@ class EnhancedHotelAIScreener:
             logger.info("🧠 Running LLM full-text review for all candidates (ChatGPT)")
             jd_text = self._build_jd_text(position)
             failures = 0
-            for c in candidates:
-                if getattr(self, "_llm_abort_due_to_rl", False):
-                    logger.info("⏭️ LLM aborted for run; skipping remaining candidates.")
-                    break
-                try:
-                    resume_text = c.get("resume_text") or ""
-                    if not resume_text:
-                        continue
-                    payload = {
-                        "pos": position,
-                        "model": getattr(self, "_llm_model", "gpt-4o-mini"),
-                        "text_hash": hashlib.md5(resume_text.encode('utf-8')).hexdigest(),
-                        "jd_hash": hashlib.md5(jd_text.encode('utf-8')).hexdigest(),
-                    }
-                    ck = self._llm_cache_key(payload)
-                    result = self._llm_cache.get(ck)
-                    if not result:
-                        result = self._llm_eval_candidate_full(position, resume_text, jd_text)
+            # Reduce calls: only re-rank top-N by traditional score first
+            base_sorted = sorted(candidates, key=lambda x: x.get("total_score", 0.0), reverse=True)
+            llm_targets = base_sorted[: max(1, int(self._llm_top_n))]
+            # Use batch only when candidate count is large enough
+            use_batch = bool(getattr(self, "_llm_batch_enabled", False) and len(llm_targets) > int(getattr(self, "_llm_batch_only_over", 10)))
+            # Prefer batch mode to reduce API calls and avoid rate limits
+            if use_batch:
+                batched: List[List[Dict[str, Any]]] = []
+                cur: List[Dict[str, Any]] = []
+                for c in llm_targets:
+                    cid = c.get('id')
+                    if cid is None:
+                        # Assign stable id for batch mapping
+                        c['id'] = hashlib.md5(((c.get('candidate_name') or '') + (c.get('file_name') or '')).encode('utf-8')).hexdigest()[:8]
+                    cur.append(c)
+                    if len(cur) >= max(1, int(self._llm_batch_size)):
+                        batched.append(cur)
+                        cur = []
+                if cur:
+                    batched.append(cur)
+
+                for group in batched:
+                    if getattr(self, "_llm_abort_due_to_rl", False):
+                        logger.info("⏭️ LLM aborted for run; skipping remaining batches.")
+                        break
+                    try:
+                        results = self._llm_rank_batch(position, jd_text, group)
+                        for c in group:
+                            rid = str(c.get('id'))
+                            r = results.get(rid)
+                            if r:
+                                c["llm_full_score"] = float(r.get("score", 0))
+                                c["llm_full_reason"] = str(r.get("reason", ""))
+                                c["llm_full_read"] = True
+                                self._llm_metrics["candidates_scored"] = self._llm_metrics.get("candidates_scored",0) + 1
+                            else:
+                                if getattr(self, "_llm_last_status", None) == 429:
+                                    self._llm_metrics["candidates_skipped_429"] = self._llm_metrics.get("candidates_skipped_429",0) + 1
+                                else:
+                                    failures += 1
+                    except Exception as e:
+                        logger.debug(f"Batch ranking error: {e}")
+                        failures += len(group)
+            else:
+                for c in llm_targets:
+                    if getattr(self, "_llm_abort_due_to_rl", False):
+                        logger.info("⏭️ LLM aborted for run; skipping remaining candidates.")
+                        break
+                    try:
+                        resume_text = c.get("resume_text") or ""
+                        if not resume_text:
+                            continue
+                        payload = {
+                            "pos": position,
+                            "model": getattr(self, "_llm_model", "gpt-4o-mini"),
+                            "text_hash": hashlib.md5(resume_text.encode('utf-8')).hexdigest(),
+                            "jd_hash": hashlib.md5(jd_text.encode('utf-8')).hexdigest(),
+                        }
+                        ck = self._llm_cache_key(payload)
+                        result = self._llm_cache.get(ck)
+                        if not result:
+                            result = self._llm_eval_candidate_full(position, resume_text, jd_text)
+                            if result:
+                                self._llm_cache[ck] = result
+                                try:
+                                    self._llm_cache_path.write_text(json.dumps(self._llm_cache, ensure_ascii=False, indent=2), encoding='utf-8')
+                                except Exception:
+                                    pass
                         if result:
-                            self._llm_cache[ck] = result
-                            try:
-                                self._llm_cache_path.write_text(json.dumps(self._llm_cache, ensure_ascii=False, indent=2), encoding='utf-8')
-                            except Exception:
-                                pass
-                    if result:
-                        c["llm_full_score"] = float(result.get("score", 0))
-                        c["llm_full_reason"] = str(result.get("reason", ""))
-                        c["llm_full_read"] = True
-                        self._llm_metrics["candidates_scored"] = self._llm_metrics.get("candidates_scored",0) + 1
-                    else:
-                        # If the last status was 429 (rate limit), don't count as a hard failure
+                            c["llm_full_score"] = float(result.get("score", 0))
+                            c["llm_full_reason"] = str(result.get("reason", ""))
+                            c["llm_full_read"] = True
+                            self._llm_metrics["candidates_scored"] = self._llm_metrics.get("candidates_scored",0) + 1
+                        else:
+                            # If the last status was 429 (rate limit), don't count as a hard failure
+                            if getattr(self, "_llm_last_status", None) == 429:
+                                logger.info("⏳ Skipping candidate due to temporary rate limit; will continue with others.")
+                                self._llm_metrics["candidates_skipped_429"] = self._llm_metrics.get("candidates_skipped_429",0) + 1
+                            else:
+                                failures += 1
+                    except Exception as e:
+                        logger.debug(f"LLM full-review error: {e}")
                         if getattr(self, "_llm_last_status", None) == 429:
-                            logger.info("⏳ Skipping candidate due to temporary rate limit; will continue with others.")
+                            # Don't penalize the run for provider throttling
                             self._llm_metrics["candidates_skipped_429"] = self._llm_metrics.get("candidates_skipped_429",0) + 1
                         else:
                             failures += 1
-                except Exception as e:
-                    logger.debug(f"LLM full-review error: {e}")
-                    if getattr(self, "_llm_last_status", None) == 429:
-                        # Don't penalize the run for provider throttling
-                        self._llm_metrics["candidates_skipped_429"] = self._llm_metrics.get("candidates_skipped_429",0) + 1
-                        pass
-                    else:
-                        failures += 1
-                    continue
+                        continue
 
-            if failures >= max(1, int(0.5 * len(candidates))) and getattr(self, "_llm_disable_on_error", False):
+            if failures >= max(1, int(0.5 * len(llm_targets))) and getattr(self, "_llm_disable_on_error", False):
                 logger.warning("🛑 Disabling LLM for this run due to repeated request failures.")
                 self._llm_client = None
                 self._llm_full_review_enabled = False
 
             # Sort by LLM score if present, otherwise fallback to traditional score
             if any("llm_full_score" in c for c in candidates):
-                candidates.sort(key=lambda x: x.get("llm_full_score", 0.0), reverse=True)
+                # Sort by llm score if available, else fall back to total_score
+                candidates.sort(key=lambda x: (1 if "llm_full_score" in x else 0, x.get("llm_full_score", x.get("total_score", 0.0))), reverse=True)
             else:
                 candidates.sort(key=lambda x: x["total_score"], reverse=True)
         else:
