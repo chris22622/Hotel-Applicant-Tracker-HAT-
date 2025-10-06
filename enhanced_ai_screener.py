@@ -263,11 +263,45 @@ class EnhancedHotelAIScreener:
             self._llm_max_chunks_per_resume: int = int(self._llm_cfg.get('max_chunks_per_resume', 2))
         except Exception:
             self._llm_max_chunks_per_resume = 2
+        self._llm_show_cooldown_progress: bool = str(self._llm_cfg.get('show_cooldown_progress', 'true')).strip().lower() in ('1','true','yes','on')
 
         self._llm_min_interval = 60.0 / self._llm_requests_per_minute if self._llm_requests_per_minute > 0 else 0.0
         self._llm_next_allowed_ts: float = 0.0
         self._llm_sema = threading.Semaphore(max(1, self._llm_max_concurrent))
         self._llm_last_status: Optional[int] = None
+
+        # LLM metrics
+        self._llm_metrics: Dict[str, Any] = {
+            "calls_total": 0,
+            "success_total": 0,
+            "fail_total": 0,
+            "rate_limit_events": 0,
+            "cooldown_seconds": 0,
+            "candidates_scored": 0,
+            "candidates_skipped_429": 0,
+        }
+
+        # Thoroughness mode overrides (env: HAT_THOROUGHNESS=fast|balanced|full)
+        try:
+            mode = str(os.getenv('HAT_THOROUGHNESS', 'balanced')).strip().lower()
+            if mode in ("fast", "balanced", "full"):
+                if mode == "fast":
+                    self._llm_requests_per_minute = min(self._llm_requests_per_minute, 4)
+                    self._llm_max_chunks_per_resume = 1 if self._llm_max_chunks_per_resume != 0 else 1
+                    self._llm_min_interval = 60.0 / self._llm_requests_per_minute
+                elif mode == "balanced":
+                    # keep config defaults
+                    pass
+                elif mode == "full":
+                    # be more thorough (may trigger more 429s if RPM is too high)
+                    if self._llm_max_chunks_per_resume != 0:
+                        self._llm_max_chunks_per_resume = 0  # no cap
+                    # allow a bit higher RPM if user configured low
+                    self._llm_requests_per_minute = max(self._llm_requests_per_minute, 12)
+                    self._llm_min_interval = 60.0 / self._llm_requests_per_minute
+                logger.info(f"🧭 Thoroughness mode: {mode} (rpm={self._llm_requests_per_minute}, chunks_cap={self._llm_max_chunks_per_resume})")
+        except Exception:
+            pass
 
         # LLM cache and client
         self._llm_cache_path = Path("var") / "llm_full_cache.json"
@@ -7110,6 +7144,7 @@ class EnhancedHotelAIScreener:
                 time.sleep(wait_for + random.uniform(0, 0.2))
             # First attempt
             try:
+                self._llm_metrics["calls_total"] += 1
                 resp = self._llm_client.chat.completions.create(
                     model=model,
                     messages=messages,
@@ -7118,6 +7153,7 @@ class EnhancedHotelAIScreener:
                 )
                 self._llm_last_status = 200
                 self._llm_next_allowed_ts = time.time() + (self._llm_min_interval or 0.0)
+                self._llm_metrics["success_total"] += 1
                 return resp
             except Exception as e:
                 msg = repr(e)
@@ -7126,9 +7162,21 @@ class EnhancedHotelAIScreener:
                     self._llm_last_status = 429
                     cool = max(1, int(self._llm_cooldown_on_429 or 30))
                     sleep_secs = cool + random.randint(0, min(10, cool))
+                    self._llm_metrics["rate_limit_events"] += 1
+                    self._llm_metrics["cooldown_seconds"] += sleep_secs
                     logger.info(f"⏳ Rate limited (429). Cooling down for {sleep_secs}s before retry...")
-                    time.sleep(sleep_secs)
+                    if self._llm_show_cooldown_progress:
+                        try:
+                            for remaining in range(sleep_secs, 0, -1):
+                                mins, secs = divmod(remaining, 60)
+                                logger.info(f"  ⏳ Cooldown: {mins:02d}:{secs:02d} remaining…")
+                                time.sleep(1)
+                        except Exception:
+                            time.sleep(sleep_secs)
+                    else:
+                        time.sleep(sleep_secs)
                     try:
+                        self._llm_metrics["calls_total"] += 1
                         resp = self._llm_client.chat.completions.create(
                             model=model,
                             messages=messages,
@@ -7137,12 +7185,15 @@ class EnhancedHotelAIScreener:
                         )
                         self._llm_last_status = 200
                         self._llm_next_allowed_ts = time.time() + (self._llm_min_interval or 0.0)
+                        self._llm_metrics["success_total"] += 1
                         return resp
                     except Exception as e2:
                         # Do not disable LLM for rate limits; let caller try fallbacks or move on
                         self._llm_last_status = 429 if ("429" in repr(e2)) else None
+                        self._llm_metrics["fail_total"] += 1
                         raise e2
                 # For non-429, re-raise to let caller decide
+                self._llm_metrics["fail_total"] += 1
                 raise
 
     def _llm_chunk_text(self, text: str) -> List[str]:
@@ -7617,16 +7668,19 @@ class EnhancedHotelAIScreener:
                         c["llm_full_score"] = float(result.get("score", 0))
                         c["llm_full_reason"] = str(result.get("reason", ""))
                         c["llm_full_read"] = True
+                        self._llm_metrics["candidates_scored"] = self._llm_metrics.get("candidates_scored",0) + 1
                     else:
                         # If the last status was 429 (rate limit), don't count as a hard failure
                         if getattr(self, "_llm_last_status", None) == 429:
                             logger.info("⏳ Skipping candidate due to temporary rate limit; will continue with others.")
+                            self._llm_metrics["candidates_skipped_429"] = self._llm_metrics.get("candidates_skipped_429",0) + 1
                         else:
                             failures += 1
                 except Exception as e:
                     logger.debug(f"LLM full-review error: {e}")
                     if getattr(self, "_llm_last_status", None) == 429:
                         # Don't penalize the run for provider throttling
+                        self._llm_metrics["candidates_skipped_429"] = self._llm_metrics.get("candidates_skipped_429",0) + 1
                         pass
                     else:
                         failures += 1
@@ -7715,6 +7769,21 @@ Recommendation Distribution:
 End of Report
 {'='*60}
 """
+
+        # Append LLM metrics if present
+        try:
+            m = getattr(self, "_llm_metrics", None)
+            if isinstance(m, dict) and m.get("calls_total") is not None:
+                report += f"\nLLM SUMMARY\n{'-'*40}\n"
+                report += f"Calls: {m.get('calls_total',0)}\n"
+                report += f"Success: {m.get('success_total',0)}\n"
+                report += f"Failures: {m.get('fail_total',0)}\n"
+                report += f"Rate limit events: {m.get('rate_limit_events',0)}\n"
+                report += f"Cooldown seconds: {m.get('cooldown_seconds',0)}\n"
+                report += f"Candidates scored: {m.get('candidates_scored',0)}\n"
+                report += f"Skipped due to 429: {m.get('candidates_skipped_429',0)}\n"
+        except Exception:
+            pass
         
         return report
     
@@ -7782,6 +7851,30 @@ End of Report
                 if req_data:
                     df_req = pd.DataFrame(req_data)
                     df_req.to_excel(writer, sheet_name='Position Requirements', index=False)
+
+                # LLM summary sheet
+                try:
+                    m = getattr(self, "_llm_metrics", None)
+                    if isinstance(m, dict) and m:
+                        llm_rows = [{
+                            'Metric': 'Calls', 'Value': m.get('calls_total',0)
+                        },{
+                            'Metric': 'Success', 'Value': m.get('success_total',0)
+                        },{
+                            'Metric': 'Failures', 'Value': m.get('fail_total',0)
+                        },{
+                            'Metric': 'Rate limit events', 'Value': m.get('rate_limit_events',0)
+                        },{
+                            'Metric': 'Cooldown seconds', 'Value': m.get('cooldown_seconds',0)
+                        },{
+                            'Metric': 'Candidates scored', 'Value': m.get('candidates_scored',0)
+                        },{
+                            'Metric': 'Skipped due to 429', 'Value': m.get('candidates_skipped_429',0)
+                        }]
+                        df_llm = pd.DataFrame(llm_rows)
+                        df_llm.to_excel(writer, sheet_name='LLM Summary', index=False)
+                except Exception:
+                    pass
             
             logger.info(f"📊 Excel report exported: {filepath}")
             return str(filepath)
@@ -7800,12 +7893,16 @@ def main():
     parser.add_argument("--output", "-o", default="screening_results", help="Output directory for results")
     parser.add_argument("--position", "-p", required=True, help="Position to screen for")
     parser.add_argument("--max-candidates", "-m", type=int, help="Maximum number of candidates to return")
+    parser.add_argument("--thoroughness", choices=["fast","balanced","full"], help="Control LLM chunking and pacing for this run")
     parser.add_argument("--export-excel", "-e", action="store_true", help="Export results to Excel")
     
     args = parser.parse_args()
     
     # Initialize screener
     screener = EnhancedHotelAIScreener(args.input, args.output)
+    # Apply thoroughness mode from CLI (override env)
+    if getattr(args, 'thoroughness', None):
+        os.environ['HAT_THOROUGHNESS'] = args.thoroughness
     
     # Screen candidates
     candidates = screener.screen_candidates(args.position, args.max_candidates)
