@@ -301,6 +301,7 @@ class EnhancedHotelAIScreener:
         self._llm_abort_due_to_rl: bool = False
         self._llm_last_429_ts: float = 0.0
         self._llm_last_ramp_ts: float = 0.0
+        self._llm_rpm_start: float = float(self._llm_requests_per_minute)
 
         # Persist/restore learned RPM across runs
         self._llm_persist_rpm: bool = str(self._llm_cfg.get('persist_rpm', 'true')).strip().lower() in ('1','true','yes','on')
@@ -7888,6 +7889,11 @@ End of Report
                 report += f"Cooldown seconds: {m.get('cooldown_seconds',0)}\n"
                 report += f"Candidates scored: {m.get('candidates_scored',0)}\n"
                 report += f"Skipped due to 429: {m.get('candidates_skipped_429',0)}\n"
+                try:
+                    report += f"Starting RPM: {self._llm_rpm_start}\n"
+                    report += f"Final RPM: {self._llm_requests_per_minute}\n"
+                except Exception:
+                    pass
         except Exception:
             pass
         
@@ -7977,6 +7983,9 @@ End of Report
                         },{
                             'Metric': 'Skipped due to 429', 'Value': m.get('candidates_skipped_429',0)
                         }]
+                        # Add RPM rows
+                        llm_rows.append({'Metric': 'Starting RPM', 'Value': getattr(self, '_llm_rpm_start', None)})
+                        llm_rows.append({'Metric': 'Final RPM', 'Value': getattr(self, '_llm_requests_per_minute', None)})
                         df_llm = pd.DataFrame(llm_rows)
                         df_llm.to_excel(writer, sheet_name='LLM Summary', index=False)
                 except Exception:

@@ -15,6 +15,15 @@ llm:
   max_chunks_per_resume: 2     # cap LLM chunks per resume; 0 disables the cap
   max_retries: 0               # SDK retries (we manage our own backoff)
   disable_on_error: false      # do not disable LLM for rate limits; only for repeated hard errors if you enable this
+  # Advanced pacing
+  dynamic_throttle_on_429: true
+  min_requests_per_minute: 1
+  max_requests_per_minute: 16
+  adaptive_ramp_up: true
+  ramp_up_step: 2
+  stable_window_secs: 90
+  cooldown_progress_step_secs: 5
+  persist_rpm: true
 
 # Optional: adjust category weights globally (will be normalized)
 # weights:

@@ -793,6 +793,26 @@ def main() -> None:
         if st.session_state['llm_enabled']:
             if not os.environ.get('OPENAI_API_KEY'):
                 st.warning("Set environment variable OPENAI_API_KEY to use LLM re-ranking.")
+            # Thoroughness selector (affects EnhancedHotelAIScreener pacing)
+            thr = st.selectbox("Thoroughness", ["balanced","fast","full"], index=(0 if os.getenv('HAT_THOROUGHNESS','balanced')=='balanced' else 1 if os.getenv('HAT_THOROUGHNESS','balanced')=='fast' else 2))
+            os.environ['HAT_THOROUGHNESS'] = thr
+            # Show learned RPM and allow reset
+            try:
+                from pathlib import Path as _Path
+                import json as _json
+                state_path = _Path("var")/"llm_state.json"
+                if state_path.exists():
+                    data = _json.loads(state_path.read_text(encoding='utf-8', errors='ignore'))
+                    rpm = data.get('rpm')
+                    st.caption(f"Learned RPM: {rpm}")
+                if st.button("Reset learned RPM"):
+                    try:
+                        state_path.unlink(missing_ok=True)  # type: ignore[arg-type]
+                        st.success("Learned RPM cleared. It will be relearned next run.")
+                    except Exception as e:
+                        st.warning(f"Couldn't reset RPM: {e}")
+            except Exception:
+                pass
 
     # Maintenance actions
     with st.sidebar.expander("🧹 Maintenance", expanded=False):
