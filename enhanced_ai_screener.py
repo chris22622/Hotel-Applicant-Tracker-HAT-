@@ -271,6 +271,10 @@ class EnhancedHotelAIScreener:
         except Exception:
             self._llm_min_requests_per_minute = 1.0
         try:
+            self._llm_max_requests_per_minute: float = float(self._llm_cfg.get('max_requests_per_minute', max(12, self._llm_requests_per_minute)))
+        except Exception:
+            self._llm_max_requests_per_minute = max(12.0, float(self._llm_requests_per_minute))
+        try:
             self._llm_max_rl_events_before_abort: int = int(self._llm_cfg.get('max_rate_limit_events_before_abort', 3))
         except Exception:
             self._llm_max_rl_events_before_abort = 3
@@ -278,6 +282,16 @@ class EnhancedHotelAIScreener:
             self._llm_cooldown_progress_step: int = int(self._llm_cfg.get('cooldown_progress_step_secs', 5))
         except Exception:
             self._llm_cooldown_progress_step = 5
+        # Adaptive ramp-up when stable (no 429s)
+        self._llm_adaptive_ramp_up: bool = str(self._llm_cfg.get('adaptive_ramp_up', 'true')).strip().lower() in ('1','true','yes','on')
+        try:
+            self._llm_ramp_up_step: float = float(self._llm_cfg.get('ramp_up_step', 2))  # add this many RPM per stable window
+        except Exception:
+            self._llm_ramp_up_step = 2.0
+        try:
+            self._llm_stable_window_secs: int = int(self._llm_cfg.get('stable_window_secs', 90))
+        except Exception:
+            self._llm_stable_window_secs = 90
 
         self._llm_min_interval = 60.0 / self._llm_requests_per_minute if self._llm_requests_per_minute > 0 else 0.0
         self._llm_next_allowed_ts: float = 0.0
@@ -285,6 +299,8 @@ class EnhancedHotelAIScreener:
         self._llm_last_status: Optional[int] = None
         self._llm_rl_events_run: int = 0
         self._llm_abort_due_to_rl: bool = False
+        self._llm_last_429_ts: float = 0.0
+        self._llm_last_ramp_ts: float = 0.0
 
         # LLM metrics
         self._llm_metrics: Dict[str, Any] = {
@@ -7170,12 +7186,24 @@ class EnhancedHotelAIScreener:
                 self._llm_last_status = 200
                 self._llm_next_allowed_ts = time.time() + (self._llm_min_interval or 0.0)
                 self._llm_metrics["success_total"] += 1
+                # Adaptive ramp-up if stable (no 429 recently)
+                if self._llm_adaptive_ramp_up:
+                    now2 = time.time()
+                    # If we haven't seen a 429 for a stable window and we haven't ramped too recently
+                    if (self._llm_last_429_ts <= 0 or (now2 - self._llm_last_429_ts) >= self._llm_stable_window_secs) and (now2 - self._llm_last_ramp_ts >= self._llm_stable_window_secs):
+                        new_rpm = min(self._llm_max_requests_per_minute, self._llm_requests_per_minute + self._llm_ramp_up_step)
+                        if new_rpm > self._llm_requests_per_minute:
+                            self._llm_requests_per_minute = new_rpm
+                            self._llm_min_interval = 60.0 / self._llm_requests_per_minute
+                            self._llm_last_ramp_ts = now2
+                            logger.info(f"🔼 Ramping LLM to {self._llm_requests_per_minute:.0f} req/min (stable window).")
                 return resp
             except Exception as e:
                 msg = repr(e)
                 is_429 = ("429" in msg) or ("Too Many Requests" in msg)
                 if is_429:
                     self._llm_last_status = 429
+                    self._llm_last_429_ts = time.time()
                     cool = max(1, int(self._llm_cooldown_on_429 or 30))
                     sleep_secs = cool + random.randint(0, min(10, cool))
                     self._llm_metrics["rate_limit_events"] += 1
