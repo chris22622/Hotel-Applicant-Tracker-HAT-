@@ -11,6 +11,9 @@ import hashlib
 import yaml
 import yaml
 import logging
+import time
+import threading
+import random
 import statistics
 from pathlib import Path
 from datetime import datetime
@@ -22,6 +25,11 @@ import re
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+logging.getLogger("openai").setLevel(logging.WARNING)
+logging.getLogger("openai._base_client").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 # Enhanced imports with fallbacks
 try:
@@ -210,7 +218,8 @@ class EnhancedHotelAIScreener:
             self._llm_max_retries: int = int(self._llm_cfg.get('max_retries', 0))
         except Exception:
             self._llm_max_retries = 0
-        self._llm_disable_on_error: bool = str(self._llm_cfg.get('disable_on_error', 'true')).strip().lower() in ('1','true','yes','on')
+        # Do NOT disable on rate-limit by default; only on hard errors when enabled
+        self._llm_disable_on_error: bool = str(self._llm_cfg.get('disable_on_error', 'false')).strip().lower() in ('1','true','yes','on')
         fb = self._llm_cfg.get('fallback_model')
         self._llm_fallback_models: List[str] = []
         if isinstance(fb, str) and fb:
@@ -218,6 +227,29 @@ class EnhancedHotelAIScreener:
         for m in ('gpt-4o', 'gpt-4.1-mini'):
             if m != self._llm_model and m not in self._llm_fallback_models:
                 self._llm_fallback_models.append(m)
+
+        # Rate limit and concurrency controls
+        try:
+            self._llm_requests_per_minute: float = float(self._llm_cfg.get('requests_per_minute', 8))
+        except Exception:
+            self._llm_requests_per_minute = 8.0
+        try:
+            self._llm_cooldown_on_429: int = int(self._llm_cfg.get('cooldown_on_429_secs', 30))
+        except Exception:
+            self._llm_cooldown_on_429 = 30
+        try:
+            self._llm_max_concurrent: int = int(self._llm_cfg.get('max_concurrent', 1))
+        except Exception:
+            self._llm_max_concurrent = 1
+        try:
+            self._llm_max_chunks_per_resume: int = int(self._llm_cfg.get('max_chunks_per_resume', 2))
+        except Exception:
+            self._llm_max_chunks_per_resume = 2
+
+        self._llm_min_interval = 60.0 / self._llm_requests_per_minute if self._llm_requests_per_minute > 0 else 0.0
+        self._llm_next_allowed_ts: float = 0.0
+        self._llm_sema = threading.Semaphore(max(1, self._llm_max_concurrent))
+        self._llm_last_status: Optional[int] = None
 
         # LLM cache and client
         self._llm_cache_path = Path("var") / "llm_full_cache.json"
@@ -7010,7 +7042,18 @@ class EnhancedHotelAIScreener:
         if not (_OPENAI_OK and api_key):
             return None
         try:
-            return OpenAI(api_key=api_key)
+            # Reduce SDK-level retries; we implement our own polite backoff
+            kwargs = {"api_key": api_key}
+            try:
+                kwargs["max_retries"] = int(getattr(self, "_llm_max_retries", 0) or 0)
+            except Exception:
+                kwargs["max_retries"] = 0
+            try:
+                # Set a default per-request timeout on the client where supported
+                kwargs["timeout"] = int(getattr(self, "_llm_timeout", 45) or 45)
+            except Exception:
+                pass
+            return OpenAI(**kwargs)
         except Exception:
             return None
 
@@ -7020,6 +7063,57 @@ class EnhancedHotelAIScreener:
         except Exception:
             s = str(payload)
         return hashlib.sha1(s.encode('utf-8')).hexdigest()
+
+    def _llm_gate_and_call(self, model: str, messages: List[Dict[str, str]], temperature: float, timeout: int):
+        """Rate-limit aware wrapper for chat.completions.create with backoff on 429.
+
+        - Enforces requests_per_minute via a moving next-allowed timestamp.
+        - Applies a short jitter to avoid thundering herd.
+        - On HTTP 429, sleeps cooldown_on_429_secs (+ jitter) and retries once.
+        """
+        if not self._llm_client:
+            raise RuntimeError("LLM client not initialized")
+        with self._llm_sema:
+            now = time.time()
+            wait_for = max(0.0, (self._llm_next_allowed_ts or 0.0) - now)
+            if wait_for > 0:
+                time.sleep(wait_for + random.uniform(0, 0.2))
+            # First attempt
+            try:
+                resp = self._llm_client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    timeout=timeout,
+                )
+                self._llm_last_status = 200
+                self._llm_next_allowed_ts = time.time() + (self._llm_min_interval or 0.0)
+                return resp
+            except Exception as e:
+                msg = repr(e)
+                is_429 = ("429" in msg) or ("Too Many Requests" in msg)
+                if is_429:
+                    self._llm_last_status = 429
+                    cool = max(1, int(self._llm_cooldown_on_429 or 30))
+                    sleep_secs = cool + random.randint(0, min(10, cool))
+                    logger.info(f"⏳ Rate limited (429). Cooling down for {sleep_secs}s before retry...")
+                    time.sleep(sleep_secs)
+                    try:
+                        resp = self._llm_client.chat.completions.create(
+                            model=model,
+                            messages=messages,
+                            temperature=temperature,
+                            timeout=timeout,
+                        )
+                        self._llm_last_status = 200
+                        self._llm_next_allowed_ts = time.time() + (self._llm_min_interval or 0.0)
+                        return resp
+                    except Exception as e2:
+                        # Do not disable LLM for rate limits; let caller try fallbacks or move on
+                        self._llm_last_status = 429 if ("429" in repr(e2)) else None
+                        raise e2
+                # For non-429, re-raise to let caller decide
+                raise
 
     def _llm_chunk_text(self, text: str) -> List[str]:
         txt = (text or "").strip()
@@ -7071,7 +7165,7 @@ class EnhancedHotelAIScreener:
         models_to_try = [self._llm_model] + [m for m in self._llm_fallback_models if m]
         for mdl in models_to_try:
             try:
-                resp = self._llm_client.chat.completions.create(
+                resp = self._llm_gate_and_call(
                     model=mdl,
                     messages=[{"role": "system", "content": sys}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
                     temperature=self._llm_temperature,
@@ -7101,6 +7195,19 @@ class EnhancedHotelAIScreener:
             return None
 
         chunks = self._llm_chunk_text(resume_text)
+        # If many chunks, sample evenly across the resume to respect rate limits
+        limit = int(getattr(self, "_llm_max_chunks_per_resume", 0) or 0)
+        if limit > 0 and len(chunks) > limit:
+            selected = []
+            step = max(1, int(len(chunks) / limit))
+            idx = 0
+            while len(selected) < limit and idx < len(chunks):
+                selected.append(chunks[idx])
+                idx += step
+            # Ensure last chunk is represented
+            if selected[-1] != chunks[-1]:
+                selected[-1] = chunks[-1]
+            chunks = selected
         if len(chunks) == 1:
             sys = (
                 "You are an expert hospitality recruiter. Read the resume text thoroughly and score "
@@ -7111,7 +7218,7 @@ class EnhancedHotelAIScreener:
             models_to_try = [self._llm_model] + [m for m in self._llm_fallback_models if m]
             for mdl in models_to_try:
                 try:
-                    resp = self._llm_client.chat.completions.create(
+                    resp = self._llm_gate_and_call(
                         model=mdl,
                         messages=[{"role": "system", "content": sys}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
                         temperature=self._llm_temperature,
@@ -7140,7 +7247,7 @@ class EnhancedHotelAIScreener:
             return None
             return None
 
-        # Multi-chunk: map then reduce
+        # Multi-chunk: map then reduce (respecting chunk limit above)
         summaries: List[Dict[str, Any]] = []
         for ch in chunks:
             ev = self._llm_eval_single_chunk(ch, position)
@@ -7162,7 +7269,7 @@ class EnhancedHotelAIScreener:
         models_to_try = [self._llm_model] + [m for m in self._llm_fallback_models if m]
         for mdl in models_to_try:
             try:
-                resp = self._llm_client.chat.completions.create(
+                resp = self._llm_gate_and_call(
                     model=mdl,
                     messages=[{"role": "system", "content": sys}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
                     temperature=self._llm_temperature,
@@ -7457,10 +7564,18 @@ class EnhancedHotelAIScreener:
                         c["llm_full_reason"] = str(result.get("reason", ""))
                         c["llm_full_read"] = True
                     else:
-                        failures += 1
+                        # If the last status was 429 (rate limit), don't count as a hard failure
+                        if getattr(self, "_llm_last_status", None) == 429:
+                            logger.info("⏳ Skipping candidate due to temporary rate limit; will continue with others.")
+                        else:
+                            failures += 1
                 except Exception as e:
                     logger.debug(f"LLM full-review error: {e}")
-                    failures += 1
+                    if getattr(self, "_llm_last_status", None) == 429:
+                        # Don't penalize the run for provider throttling
+                        pass
+                    else:
+                        failures += 1
                     continue
 
             if failures >= max(1, int(0.5 * len(candidates))) and getattr(self, "_llm_disable_on_error", False):

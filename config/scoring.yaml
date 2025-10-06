@@ -8,6 +8,13 @@ llm:
   temperature: 0.1
   timeout: 45          # seconds
   chunk_chars: 6000    # characters per chunk for long resumes
+  # Rate-limit & stability controls
+  requests_per_minute: 8       # polite throughput; lower if you still see 429s
+  cooldown_on_429_secs: 30     # sleep window when provider returns 429
+  max_concurrent: 1            # keep at 1 to avoid bursty 429s
+  max_chunks_per_resume: 2     # cap LLM chunks per resume; 0 disables the cap
+  max_retries: 0               # SDK retries (we manage our own backoff)
+  disable_on_error: false      # do not disable LLM for rate limits; only for repeated hard errors if you enable this
 
 # Optional: adjust category weights globally (will be normalized)
 # weights:
