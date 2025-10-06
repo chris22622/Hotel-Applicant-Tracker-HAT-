@@ -45,7 +45,7 @@ except (ImportError, OSError):
 
 try:
     import pytesseract
-    from PIL import Image
+    from PIL import Image, ImageOps, ImageFilter
     import pdf2image
     ocr_available = True
     logger.info("✅ OCR capabilities loaded")
@@ -194,6 +194,24 @@ class EnhancedHotelAIScreener:
             logger.info("🛑 OCR disabled by config")
         if self.max_files > 0:
             logger.info(f"📦 File cap per run: {self.max_files}")
+
+        # Configure Tesseract path on Windows if available
+        try:
+            if ocr_available:
+                import platform
+                if platform.system().lower().startswith('win'):
+                    default_tess = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+                    try:
+                        import pytesseract as _pt  # type: ignore
+                        if os.path.exists(default_tess):
+                            _pt.pytesseract.tesseract_cmd = default_tess  # type: ignore
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Default Tesseract runtime config (good general-mode)
+        self._tess_config = "--oem 3 --psm 6"
 
         # Optional: LLM full-text review settings
         self._llm_cfg = (self._config.get("llm") or {}) if hasattr(self, "_config") else {}
@@ -6815,11 +6833,15 @@ class EnhancedHotelAIScreener:
                     and not getattr(self, 'fast_mode', False)
                 ):
                     try:
-                        pages = pdf2image.convert_from_path(file_path)
+                        pages = pdf2image.convert_from_path(file_path, dpi=300)
                         max_pages = getattr(self, 'ocr_max_pages', 2) or 2
                         for pg in pages[:max_pages]:
                             try:
-                                ocr_text += pytesseract.image_to_string(pg) + "\n"
+                                try:
+                                    enhanced = self._enhance_image_for_ocr(pg)
+                                except Exception:
+                                    enhanced = pg
+                                ocr_text += pytesseract.image_to_string(enhanced, lang='eng', config=self._tess_config) + "\n"
                             except Exception:
                                 continue
                     except Exception:
@@ -6900,7 +6922,11 @@ class EnhancedHotelAIScreener:
                                     data = z.read(name)
                                     from io import BytesIO
                                     img = Image.open(BytesIO(data))
-                                    ocr_text += pytesseract.image_to_string(img) + "\n"
+                                    try:
+                                        enhanced = self._enhance_image_for_ocr(img)
+                                    except Exception:
+                                        enhanced = img
+                                    ocr_text += pytesseract.image_to_string(enhanced, lang='eng', config=self._tess_config) + "\n"
                                 except Exception:
                                     continue
                     except Exception:
@@ -6923,7 +6949,11 @@ class EnhancedHotelAIScreener:
             elif file_ext in ['.jpg', '.jpeg', '.png', '.tiff', '.bmp'] and ocr_available and not getattr(self, 'disable_ocr', False) and not getattr(self, 'fast_mode', False):
                 try:
                     image = Image.open(file_path)
-                    ocr_text = pytesseract.image_to_string(image)
+                    try:
+                        enhanced = self._enhance_image_for_ocr(image)
+                    except Exception:
+                        enhanced = image
+                    ocr_text = pytesseract.image_to_string(enhanced, lang='eng', config=self._tess_config)
                 except Exception:
                     return ""
             else:
@@ -7351,6 +7381,30 @@ class EnhancedHotelAIScreener:
                 break
         
         return info
+
+    def _enhance_image_for_ocr(self, img: Image.Image) -> Image.Image:
+        """Lightweight enhancement for OCR: grayscale, autocontrast, upscale.
+
+        Avoids heavy thresholding to preserve small fonts. Scales up to ~1600px on the longest side.
+        """
+        try:
+            if img.mode != 'L':
+                img = img.convert('L')
+            try:
+                img = ImageOps.autocontrast(img)
+            except Exception:
+                pass
+            w, h = img.size
+            longest = max(w, h)
+            target = 1600
+            if longest < target:
+                scale = target / float(longest)
+                new_w, new_h = int(w * scale), int(h * scale)
+                resample = getattr(Image, 'LANCZOS', getattr(Image, 'BICUBIC', Image.BILINEAR))
+                img = img.resize((new_w, new_h), resample)
+        except Exception:
+            return img
+        return img
     
     def _detect_gender(self, text: str, name: str) -> Dict[str, Any]:
         """Intelligently detect candidate gender from resume content."""
@@ -7691,7 +7745,9 @@ End of Report
                         'Experience Quality': candidate['experience_quality'],
                         'Skills Found': len(candidate['skills_found']),
                         'Key Skills': ', '.join(candidate['skills_found'][:3]),
-                        'File Name': candidate['file_name']
+                        'File Name': candidate['file_name'],
+                        'LLM Full Score': candidate.get('llm_full_score'),
+                        'LLM Reason': candidate.get('llm_full_reason')
                     })
                 
                 df_main = pd.DataFrame(main_data)
