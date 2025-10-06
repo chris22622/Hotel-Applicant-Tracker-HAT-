@@ -302,6 +302,15 @@ class EnhancedHotelAIScreener:
         self._llm_last_429_ts: float = 0.0
         self._llm_last_ramp_ts: float = 0.0
 
+        # Persist/restore learned RPM across runs
+        self._llm_persist_rpm: bool = str(self._llm_cfg.get('persist_rpm', 'true')).strip().lower() in ('1','true','yes','on')
+        self._llm_state_path = Path("var") / "llm_state.json"
+        if self._llm_persist_rpm:
+            try:
+                self._load_llm_state()
+            except Exception:
+                pass
+
         # LLM metrics
         self._llm_metrics: Dict[str, Any] = {
             "calls_total": 0,
@@ -7160,6 +7169,31 @@ class EnhancedHotelAIScreener:
             s = str(payload)
         return hashlib.sha1(s.encode('utf-8')).hexdigest()
 
+    def _load_llm_state(self) -> None:
+        try:
+            self._llm_state_path.parent.mkdir(parents=True, exist_ok=True)
+            if self._llm_state_path.exists():
+                data = json.loads(self._llm_state_path.read_text(encoding='utf-8', errors='ignore'))
+                rpm = float(data.get('rpm', 0))
+                mode = str(os.getenv('HAT_THOROUGHNESS', 'balanced')).strip().lower()
+                if rpm > 0 and mode in ('balanced','full'):
+                    rpm = min(self._llm_max_requests_per_minute, max(self._llm_min_requests_per_minute, rpm))
+                    if rpm != self._llm_requests_per_minute:
+                        self._llm_requests_per_minute = rpm
+                        self._llm_min_interval = 60.0 / self._llm_requests_per_minute
+                        logger.info(f"💾 Restored learned RPM: {self._llm_requests_per_minute:.0f} req/min")
+        except Exception:
+            pass
+
+    def _save_llm_state(self) -> None:
+        if not getattr(self, '_llm_persist_rpm', False):
+            return
+        try:
+            state = {'rpm': float(self._llm_requests_per_minute), 'ts': datetime.utcnow().isoformat() + 'Z'}
+            self._llm_state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
+        except Exception:
+            pass
+
     def _llm_gate_and_call(self, model: str, messages: List[Dict[str, str]], temperature: float, timeout: int):
         """Rate-limit aware wrapper for chat.completions.create with backoff on 429.
 
@@ -7197,6 +7231,10 @@ class EnhancedHotelAIScreener:
                             self._llm_min_interval = 60.0 / self._llm_requests_per_minute
                             self._llm_last_ramp_ts = now2
                             logger.info(f"🔼 Ramping LLM to {self._llm_requests_per_minute:.0f} req/min (stable window).")
+                            try:
+                                self._save_llm_state()
+                            except Exception:
+                                pass
                 return resp
             except Exception as e:
                 msg = repr(e)
@@ -7216,6 +7254,10 @@ class EnhancedHotelAIScreener:
                             self._llm_requests_per_minute = new_rpm
                             self._llm_min_interval = 60.0 / self._llm_requests_per_minute
                             logger.info(f"🪫 Throttling LLM to {self._llm_requests_per_minute:.0f} req/min due to rate limits.")
+                            try:
+                                self._save_llm_state()
+                            except Exception:
+                                pass
                     logger.info(f"⏳ Rate limited (429). Cooling down for {sleep_secs}s before retry...")
                     if self._llm_show_cooldown_progress:
                         try:
