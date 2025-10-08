@@ -9,8 +9,8 @@ llm:
   timeout: 45          # seconds
   chunk_chars: 6000    # characters per chunk for long resumes
   # Rate-limit & stability controls
-  requests_per_minute: 8       # polite throughput; lower if you still see 429s
-  cooldown_on_429_secs: 30     # sleep window when provider returns 429
+  requests_per_minute: 6       # start conservatively; will ramp when stable
+  cooldown_on_429_secs: 45     # longer cooldown to avoid repeated 429s
   max_concurrent: 1            # keep at 1 to avoid bursty 429s
   max_chunks_per_resume: 2     # cap LLM chunks per resume; 0 disables the cap
   max_retries: 0               # SDK retries (we manage our own backoff)
@@ -18,7 +18,7 @@ llm:
   # Advanced pacing
   dynamic_throttle_on_429: true
   min_requests_per_minute: 1
-  max_requests_per_minute: 16
+  max_requests_per_minute: 12
   adaptive_ramp_up: true
   ramp_up_step: 2
   stable_window_secs: 90
@@ -26,8 +26,15 @@ llm:
   persist_rpm: true
   # Batch ranking (reduces API calls and rate limits)
   batch_mode_enabled: true
-  batch_size: 5
-  snippet_chars: 1000
+  batch_size: 4
+  snippet_chars: 800
+  top_n: 15
+  batch_only_over: 10
+  abort_on_rate_limit: false
+
+# Embeddings fallback (when sentence-transformers unavailable)
+embeddings:
+  enable_fallback: true   # use TF-IDF similarity if embedding model is missing
 
 # Optional: adjust category weights globally (will be normalized)
 # weights:

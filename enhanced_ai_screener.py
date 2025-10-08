@@ -335,6 +335,7 @@ class EnhancedHotelAIScreener:
                 self._load_llm_state()
             except Exception:
                 pass
+        logger.info(f"🧭 LLM pacing: start {self._llm_requests_per_minute:.0f} req/min (persist_rpm={'on' if self._llm_persist_rpm else 'off'})")
 
         # LLM metrics
         self._llm_metrics: Dict[str, Any] = {
@@ -507,7 +508,7 @@ class EnhancedHotelAIScreener:
             self._embedding_dim = len(self._embedding_model.encode(["test"], show_progress_bar=False)[0])  # type: ignore
             logger.info(f"🧠 Loaded embedding model: {model_name}")
         except Exception as e:
-            logger.info(f"ℹ️ Embedding model unavailable ({e}); proceeding without embeddings")
+            logger.info(f"ℹ️ Embedding model unavailable ({e}); using fallback if enabled")
             self._embedding_model = None
         return self._embedding_model
 
@@ -517,6 +518,23 @@ class EnhancedHotelAIScreener:
             return self._embed_cache[key]
         model = self._get_embedding_model()
         if not model:
+            # Fallback: TF-IDF character n-gram vector to approximate similarity cheaply
+            try:
+                emb_cfg = (self._config.get("embeddings", {}) or {}) if hasattr(self, "_config") else {}
+                if str(emb_cfg.get("enable_fallback", "true")).lower() in ("1","true","yes","on") and sklearn_available:
+                    # Cache a shared TF-IDF vectorizer lazily
+                    if not hasattr(self, "_tfidf_fallback"):
+                        # Use char-ngrams for robustness to noisy resumes
+                        self._tfidf_fallback = TfidfVectorizer(analyzer="char", ngram_range=(3,5), min_df=1)
+                        # Fit on a tiny seed corpus to initialize vocabulary; we'll refit adaptively
+                        self._tfidf_fallback.fit(["resume", "job", "hotel", "front desk", "housekeeping", "bartender"])  # type: ignore
+                    vec = self._tfidf_fallback.transform([text])  # type: ignore
+                    dense = vec.toarray()[0]
+                    arr = list(map(float, dense))
+                    self._embed_cache[key] = arr
+                    return arr
+            except Exception:
+                pass
             return None
         try:
             vec = model.encode([text], show_progress_bar=False)[0]  # type: ignore
@@ -6618,10 +6636,12 @@ class EnhancedHotelAIScreener:
             
             # Extract text from file
             text = self._extract_text_from_file(file_path)
-            # Allow more leniency to avoid dropping all candidates when text extraction is weak
-            if not text or len(text.strip()) < 20:
-                logger.warning(f"⚠️ Insufficient text extracted from {file_path.name} (len={len(text.strip()) if text else 0})")
-                return None
+            # Allow more leniency to avoid dropping candidates when extraction is weak
+            if not text or len(text.strip()) < 10:
+                logger.info(f"⚠️ Insufficient text extracted from {file_path.name} (len={len(text.strip()) if text else 0}); proceeding with minimal analysis")
+                # Proceed with minimal analysis to avoid losing candidates entirely
+                if not text:
+                    text = ""
 
             # Duplicate detection (hash of normalized text)
             norm_for_hash = re.sub(r"\s+", " ", text.lower()).strip()
@@ -7283,6 +7303,22 @@ class EnhancedHotelAIScreener:
                                 self._save_llm_state()
                             except Exception:
                                 pass
+                    # Degrade batch settings and token footprint to ease TPM/RPM pressure
+                    try:
+                        # Reduce batch size
+                        if getattr(self, "_llm_batch_enabled", False) and getattr(self, "_llm_batch_size", 1) > 1:
+                            self._llm_batch_size = max(1, int(self._llm_batch_size // 2) or 1)
+                            logger.info(f"📦 Reducing LLM batch size to {self._llm_batch_size} due to rate limits.")
+                        # Reduce snippet size (token budget proxy)
+                        if getattr(self, "_llm_snippet_chars", 0) and self._llm_snippet_chars > 400:
+                            self._llm_snippet_chars = int(max(300, self._llm_snippet_chars * 0.75))
+                            logger.info(f"✂️ Reducing snippet size to {self._llm_snippet_chars} chars due to rate limits.")
+                        # Narrow the set of candidates we send to the LLM
+                        if getattr(self, "_llm_top_n", 0) and self._llm_top_n > 10:
+                            self._llm_top_n = max(10, int(self._llm_top_n * 0.8))
+                            logger.info(f"🎯 Narrowing LLM top-N to {self._llm_top_n} due to rate limits.")
+                    except Exception:
+                        pass
                     logger.info(f"⏳ Rate limited (429). Cooling down for {sleep_secs}s before retry...")
                     if self._llm_show_cooldown_progress:
                         try:
@@ -7298,11 +7334,26 @@ class EnhancedHotelAIScreener:
                             time.sleep(sleep_secs)
                     else:
                         time.sleep(sleep_secs)
-                    # Abort LLM for this run if too many rate limits
+                    # Abort LLM for this run if too many rate limits (only if explicitly enabled)
                     if self._llm_rl_events_run >= max(1, int(self._llm_max_rl_events_before_abort)):
-                        logger.warning("🛑 Too many rate-limit events. Aborting LLM for the remainder of this run.")
-                        self._llm_abort_due_to_rl = True
-                        raise e
+                        if getattr(self, "_llm_abort_on_rate_limit", False):
+                            logger.warning("🛑 Too many rate-limit events. Aborting LLM for the remainder of this run.")
+                            self._llm_abort_due_to_rl = True
+                            raise e
+                        else:
+                            logger.warning("⚠️ Too many rate-limit events; continuing in degraded mode (no abort).")
+                            # Force most conservative settings and continue with single-item requests
+                            try:
+                                self._llm_requests_per_minute = max(1.0, float(self._llm_min_requests_per_minute))
+                                self._llm_min_interval = 60.0 / self._llm_requests_per_minute
+                                self._llm_batch_size = 1
+                                if getattr(self, "_llm_snippet_chars", 0):
+                                    self._llm_snippet_chars = int(min(self._llm_snippet_chars, 600))
+                                # Reset the counter so we don't repeatedly hit this branch
+                                self._llm_rl_events_run = 0
+                                self._save_llm_state()
+                            except Exception:
+                                pass
                     try:
                         self._llm_metrics["calls_total"] += 1
                         resp = self._llm_client.chat.completions.create(

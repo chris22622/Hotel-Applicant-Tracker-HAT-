@@ -50,7 +50,7 @@ python -m pip install pandas openpyxl pyyaml streamlit plotly matplotlib seaborn
 
 :: Install enhanced AI packages (optional)
 echo 📦 Installing AI enhancement packages...
-python -m pip install spacy scikit-learn textblob --quiet
+python -m pip install spacy scikit-learn textblob sentence-transformers --quiet
 if not errorlevel 1 (
     echo 📦 Downloading spaCy language model...
     python -m spacy download en_core_web_sm --quiet
